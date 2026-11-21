@@ -1,0 +1,74 @@
+export type UnitType = 'UNIT' | 'GRAM';
+export type PaymentType = 'CASH' | 'CREDIT' | 'MIXED';
+export type SaleStatus = 'COMPLETED' | 'VOIDED';
+export type StockMovementType = 'IN_PURCHASE' | 'OUT_SALE' | 'ADJUSTMENT' | 'VOID_RETURN';
+
+export interface Category {
+  readonly id: string;
+  readonly name: string;
+  readonly sortOrder: number;
+  readonly createdAt: string;
+}
+
+export interface Product {
+  readonly id: string;
+  readonly categoryId: string | null;
+  readonly name: string;
+  readonly unitType: UnitType;
+  readonly unitPriceCents: number;
+  readonly priceBaseQty: number;
+  readonly stockQty: number;
+  readonly minStockAlert: number;
+  readonly imageUri: string | null;
+  readonly isActive: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface Customer {
+  readonly id: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly notes: string | null;
+  readonly isActive: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface Sale {
+  readonly id: string;
+  readonly customerId: string | null;
+  readonly paymentType: PaymentType;
+  readonly totalCents: number;
+  readonly paidCents: number;
+  readonly status: SaleStatus;
+  readonly createdAt: string;
+}
+
+export interface SaleItem {
+  readonly id: string;
+  readonly saleId: string;
+  readonly productId: string;
+  readonly productNameSnapshot: string;
+  readonly unitTypeSnapshot: UnitType;
+  readonly quantity: number;
+  readonly unitPriceSnapshotCents: number;
+  readonly priceBaseQtySnapshot: number;
+  readonly subtotalCents: number;
+}
+
+export interface CustomerPayment {
+  readonly id: string;
+  readonly customerId: string;
+  readonly amountCents: number;
+  readonly notes: string | null;
+  readonly createdAt: string;
+}
+
+export interface CustomerBalance {
+  readonly customerId: string;
+  readonly fullName: string;
+  readonly totalCreditedCents: number;
+  readonly totalPaidCents: number;
+  readonly currentDebtCents: number;
+}
