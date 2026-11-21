@@ -57,6 +57,10 @@ export interface SaleItem {
   readonly subtotalCents: number;
 }
 
+export interface SaleWithItems extends Sale {
+  readonly items: readonly SaleItem[];
+}
+
 export interface CustomerPayment {
   readonly id: string;
   readonly customerId: string;
@@ -71,4 +75,14 @@ export interface CustomerBalance {
   readonly totalCreditedCents: number;
   readonly totalPaidCents: number;
   readonly currentDebtCents: number;
+}
+
+export interface StockMovement {
+  readonly id: string;
+  readonly productId: string;
+  readonly movementType: StockMovementType;
+  readonly deltaQty: number;
+  readonly referenceSaleId: string | null;
+  readonly reason: string | null;
+  readonly createdAt: string;
 }
