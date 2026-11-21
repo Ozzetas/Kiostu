@@ -9,7 +9,11 @@ export type ErrorCode =
   | 'INSUFFICIENT_STOCK'
   | 'ENTITY_NOT_FOUND'
   | 'ARITHMETIC_OVERFLOW_ERROR'
-  | 'FILE_SYSTEM_ERROR';
+  | 'FILE_SYSTEM_ERROR'
+  | 'SECURITY_STORAGE_ERROR'
+  | 'BIOMETRIC_AUTH_ERROR'
+  | 'EMERGENCY_WIPE_ERROR'
+  | 'CRYPTO_OPERATION_ERROR';
 
 export abstract class AppError extends Error {
   public readonly code: ErrorCode;
@@ -50,6 +54,31 @@ export class DatabaseError extends AppError {
     originalError?: unknown
   ) {
     super(code, message, context, originalError);
+  }
+}
+
+export type SecurityErrorCode = Extract<
+  ErrorCode,
+  | 'SECURITY_STORAGE_ERROR'
+  | 'BIOMETRIC_AUTH_ERROR'
+  | 'EMERGENCY_WIPE_ERROR'
+  | 'CRYPTO_OPERATION_ERROR'
+>;
+
+export class SecurityError extends AppError {
+  constructor(
+    code: SecurityErrorCode,
+    message: string,
+    context?: Record<string, unknown>,
+    originalError?: unknown
+  ) {
+    super(code, message, context, originalError);
+  }
+}
+
+export class FileSystemError extends AppError {
+  constructor(message: string, context?: Record<string, unknown>, originalError?: unknown) {
+    super('FILE_SYSTEM_ERROR', message, context, originalError);
   }
 }
 
