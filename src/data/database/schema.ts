@@ -1,9 +1,13 @@
 export const SCHEMA_VERSION = 1;
 
-export const INITIAL_SCHEMA_SQL = `
-  PRAGMA foreign_keys = ON;
+// Ejecuto los PRAGMA a nivel conexión y fuera de cualquier transacción porque SQLite rechaza cambiar a WAL dentro de un bloque transaccional y descarta foreign_keys.
+export const CONNECTION_PRAGMAS_SQL = `
   PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+  PRAGMA busy_timeout = 5000;
+`;
 
+export const INITIAL_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS categories (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
