@@ -1,56 +1,49 @@
-import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { useCallback } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Logger } from '../src/core/logging/Logger';
+import { SecurityGate } from '../src/presentation/components/SecurityGate';
+import { AppServicesProvider } from '../src/presentation/di/AppServicesProvider';
 
-import { useColorScheme } from '@/components/useColorScheme';
+const logger = new Logger('RootLayout');
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+// Retengo la splash screen hasta finalizar la apertura y migración de SQLite.
+void SplashScreen.preventAutoHideAsync().catch((error: unknown) => {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  logger.warn('No se pudo retener la splash screen automáticamente', {
+    reason: normalized.message,
+  });
+});
+
+export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  anchor: '(tabs)',
+  initialRouteName: '(tabs)',
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
-
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
-  }
-
-  return <RootLayoutNav />;
-}
-
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  const handleAppReady = useCallback(() => {
+    void SplashScreen.hideAsync().catch((error: unknown) => {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      logger.warn('No se pudo ocultar la splash screen', { reason: normalized.message });
+    });
+  }, []);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <AppServicesProvider onReady={handleAppReady}>
+        <SecurityGate>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="modal"
+              options={{ presentation: 'modal', headerShown: true, title: 'Detalle' }}
+            />
+            <Stack.Screen name="+not-found" />
+          </Stack>
+        </SecurityGate>
+      </AppServicesProvider>
+    </SafeAreaProvider>
   );
 }
