@@ -13,7 +13,11 @@ export type ErrorCode =
   | 'SECURITY_STORAGE_ERROR'
   | 'BIOMETRIC_AUTH_ERROR'
   | 'EMERGENCY_WIPE_ERROR'
-  | 'CRYPTO_OPERATION_ERROR';
+  | 'CRYPTO_OPERATION_ERROR'
+  | 'MEDIA_PERMISSION_DENIED'
+  | 'MEDIA_PROCESSING_ERROR'
+  | 'NETWORK_DOWNLOAD_ERROR'
+  | 'NETWORK_TIMEOUT_ERROR';
 
 export abstract class AppError extends Error {
   public readonly code: ErrorCode;
@@ -68,6 +72,25 @@ export type SecurityErrorCode = Extract<
 export class SecurityError extends AppError {
   constructor(
     code: SecurityErrorCode,
+    message: string,
+    context?: Record<string, unknown>,
+    originalError?: unknown
+  ) {
+    super(code, message, context, originalError);
+  }
+}
+
+export type MediaErrorCode = Extract<
+  ErrorCode,
+  | 'MEDIA_PERMISSION_DENIED'
+  | 'MEDIA_PROCESSING_ERROR'
+  | 'NETWORK_DOWNLOAD_ERROR'
+  | 'NETWORK_TIMEOUT_ERROR'
+>;
+
+export class MediaError extends AppError {
+  constructor(
+    code: MediaErrorCode,
     message: string,
     context?: Record<string, unknown>,
     originalError?: unknown
