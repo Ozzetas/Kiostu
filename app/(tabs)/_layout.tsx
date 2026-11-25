@@ -1,66 +1,99 @@
-import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Tabs } from 'expo-router';
+import { ComponentProps } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Colors, Typography } from '../../src/presentation/theme/tokens';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+interface TabBarIconProps {
+  readonly focused: boolean;
+  readonly activeName: IoniconName;
+  readonly inactiveName: IoniconName;
+  readonly rawColor: unknown;
+}
+
+function resolveTabIconColor(rawColor: unknown, focused: boolean): string {
+  // Normalizo el color recibido desde React Navigation porque RN 0.88 incluye null en ColorValue y @expo/vector-icons exige string.
+  if (typeof rawColor === 'string' && rawColor.length > 0) {
+    return rawColor;
+  }
+  return focused ? Colors.primary : Colors.textMuted;
+}
+
+function TabBarIcon({ focused, activeName, inactiveName, rawColor }: TabBarIconProps) {
+  return (
+    <Ionicons
+      name={focused ? activeName : inactiveName}
+      size={22}
+      color={resolveTabIconColor(rawColor, focused)}
+    />
+  );
+}
+
+export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+        headerShown: false,
+        tabBarActiveTintColor: Colors.primary,
+        tabBarInactiveTintColor: Colors.textMuted,
+        tabBarLabelStyle: {
+          fontSize: Typography.micro,
+          fontWeight: '700',
+          marginTop: 2,
+        },
+        tabBarStyle: {
+          backgroundColor: Colors.surface,
+          borderTopColor: Colors.border,
+          borderTopWidth: 1,
+          // Adapto dinámicamente la altura inferior a la barra de gestos de iPhone 14 Pro Max y modelos recientes.
+          height: 60 + insets.bottom,
+          paddingTop: 8,
+          paddingBottom: Math.max(insets.bottom, 8),
+        },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
+          title: 'Catálogo',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon
+              focused={focused}
+              activeName="grid"
+              inactiveName="grid-outline"
+              rawColor={color}
             />
-          ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
           ),
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="customers"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
+          title: 'Fiados',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon
+              focused={focused}
+              activeName="people"
+              inactiveName="people-outline"
+              rawColor={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Ajustes',
+          tabBarIcon: ({ color, focused }) => (
+            <TabBarIcon
+              focused={focused}
+              activeName="shield-checkmark"
+              inactiveName="shield-checkmark-outline"
+              rawColor={color}
             />
           ),
         }}

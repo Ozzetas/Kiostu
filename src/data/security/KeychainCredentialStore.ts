@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { SecurityError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
 import {
-    CredentialHashRecord,
-    DEFAULT_SESSION_TIMEOUT_MS,
-    MAX_SESSION_TIMEOUT_MS,
-    MIN_SESSION_TIMEOUT_MS,
-    SecurityPolicy,
-    SecuritySnapshot,
+  CredentialHashRecord,
+  DEFAULT_SESSION_TIMEOUT_MS,
+  MAX_SESSION_TIMEOUT_MS,
+  MIN_SESSION_TIMEOUT_MS,
+  SecurityPolicy,
+  SecuritySnapshot,
 } from '../../domain/entities/security';
 import { ISecurityRepository } from '../../domain/repositories/ISecurityRepository';
 
@@ -97,6 +97,16 @@ export class KeychainCredentialStore implements ISecurityRepository {
 
   public async clearLastActivityAt(): Promise<void> {
     await this.deleteKey(KEY_LAST_ACTIVITY_MS);
+  }
+
+  public async clearAllCredentials(): Promise<void> {
+    await Promise.all([
+      this.deleteKey(KEY_PRIMARY_CREDENTIAL),
+      this.deleteKey(KEY_PANIC_CREDENTIAL),
+      this.deleteKey(KEY_SECURITY_POLICY),
+      this.deleteKey(KEY_LAST_ACTIVITY_MS),
+    ]);
+    this.logger.info('Todas las credenciales del Keychain fueron eliminadas');
   }
 
   private async getPolicy(): Promise<SecurityPolicy> {

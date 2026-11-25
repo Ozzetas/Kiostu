@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
@@ -10,6 +10,7 @@ const logger = new Logger('AppServicesProvider');
 
 interface AppServicesContextValue {
   readonly services: AppServices;
+  readonly isReady: boolean;
   readonly dataRevision: number;
   readonly notifyDataChanged: () => void;
 }
@@ -26,7 +27,7 @@ export function AppServicesProvider({ onReady, children }: AppServicesProviderPr
   const [isReady, setIsReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  // Incremento este contador tras cada mutación, wipe o restore para invalidar caches locales en pantallas.
+  // Incremento este contador tras cada mutación, wipe o restore para invalidar caches en pantalla.
   const [dataRevision, setDataRevision] = useState(0);
 
   const notifyDataChanged = useCallback(() => {
@@ -69,38 +70,44 @@ export function AppServicesProvider({ onReady, children }: AppServicesProviderPr
   const contextValue = useMemo<AppServicesContextValue>(
     () => ({
       services,
+      isReady,
       dataRevision,
       notifyDataChanged,
     }),
-    [services, dataRevision, notifyDataChanged]
+    [services, isReady, dataRevision, notifyDataChanged]
   );
 
-  if (initError !== null) {
-    return (
-      <SafeAreaView style={styles.centeredContainer}>
-        <Text style={styles.errorTitle}>Error de almacenamiento local</Text>
-        <Text style={styles.errorDetail}>{initError}</Text>
-        <Pressable
-          style={({ pressed }) => [styles.retryButton, pressed && styles.retryButtonPressed]}
-          onPress={() => setRetryCount((prev) => prev + 1)}
-        >
-          <Text style={styles.retryButtonText}>Reintentar inicialización</Text>
-        </Pressable>
-      </SafeAreaView>
-    );
-  }
-
-  if (!isReady) {
-    return (
-      <SafeAreaView style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Preparando almacenamiento local...</Text>
-      </SafeAreaView>
-    );
-  }
-
   return (
-    <AppServicesContext.Provider value={contextValue}>{children}</AppServicesContext.Provider>
+    <AppServicesContext.Provider value={contextValue}>
+      <View style={styles.rootFlex}>
+        {/* Mantengo el árbol de navegación siempre montado para no romper el ciclo de vida de Expo Router. */}
+        {children}
+
+        {initError !== null && (
+          <View style={[StyleSheet.absoluteFill, styles.blockingOverlay]} pointerEvents="auto">
+            <SafeAreaView style={styles.centeredContainer}>
+              <Text style={styles.errorTitle}>Error de almacenamiento local</Text>
+              <Text style={styles.errorDetail}>{initError}</Text>
+              <Pressable
+                style={({ pressed }) => [styles.retryButton, pressed && styles.retryButtonPressed]}
+                onPress={() => setRetryCount((prev) => prev + 1)}
+              >
+                <Text style={styles.retryButtonText}>Reintentar inicialización</Text>
+              </Pressable>
+            </SafeAreaView>
+          </View>
+        )}
+
+        {!isReady && initError === null && (
+          <View style={[StyleSheet.absoluteFill, styles.blockingOverlay]} pointerEvents="auto">
+            <SafeAreaView style={styles.centeredContainer}>
+              <ActivityIndicator size="large" color={Colors.primaryLight} />
+              <Text style={styles.loadingText}>Preparando almacenamiento local...</Text>
+            </SafeAreaView>
+          </View>
+        )}
+      </View>
+    </AppServicesContext.Provider>
   );
 }
 
@@ -113,9 +120,15 @@ export function useAppServices(): AppServicesContextValue {
 }
 
 const styles = StyleSheet.create({
+  rootFlex: {
+    flex: 1,
+  },
+  blockingOverlay: {
+    backgroundColor: Colors.vaultBackground,
+    zIndex: 10000,
+  },
   centeredContainer: {
     flex: 1,
-    backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.xl,
@@ -123,7 +136,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: Typography.body,
-    color: Colors.textSecondary,
+    color: Colors.vaultTextSecondary,
   },
   errorTitle: {
     fontSize: Typography.subtitle,
@@ -133,7 +146,7 @@ const styles = StyleSheet.create({
   },
   errorDetail: {
     fontSize: Typography.body,
-    color: Colors.textSecondary,
+    color: Colors.vaultTextSecondary,
     textAlign: 'center',
   },
   retryButton: {

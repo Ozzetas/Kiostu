@@ -1,8 +1,8 @@
 import {
-    BiometricAttemptStatus,
-    CredentialHashRecord,
-    SecurityPolicy,
-    SecuritySnapshot,
+  BiometricAttemptStatus,
+  CredentialHashRecord,
+  SecurityPolicy,
+  SecuritySnapshot,
 } from '../entities/security';
 
 export interface ISecurityRepository {
@@ -15,6 +15,7 @@ export interface ISecurityRepository {
   savePolicy(policy: SecurityPolicy): Promise<void>;
   updateLastActivityAt(timestampMs: number): Promise<void>;
   clearLastActivityAt(): Promise<void>;
+  clearAllCredentials(): Promise<void>;
 }
 
 export interface IBiometricAuthenticator {

@@ -1,27 +1,36 @@
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
-    ActivityIndicator,
-    AppState,
-    AppStateStatus,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  AppState,
+  AppStateStatus,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
 import {
-    AuthOutcome,
-    AuthRequirement,
-    DEFAULT_SESSION_TIMEOUT_MS,
+  AuthOutcome,
+  AuthRequirement,
+  DEFAULT_SESSION_TIMEOUT_MS,
 } from '../../domain/entities/security';
 import { useAppServices } from '../di/AppServicesProvider';
 import { Colors, Radius, Shadows, Spacing, Typography } from '../theme/tokens';
@@ -29,6 +38,22 @@ import { ErrorBanner } from './ErrorBanner';
 import { PrivacyOverlay } from './PrivacyOverlay';
 
 const logger = new Logger('SecurityGate');
+
+interface SecuritySessionContextValue {
+  readonly isUnlocked: boolean;
+  readonly lockNow: () => void;
+  readonly resetVaultForDev: () => Promise<void>;
+}
+
+const SecuritySessionContext = createContext<SecuritySessionContextValue | null>(null);
+
+export function useSecuritySession(): SecuritySessionContextValue {
+  const ctx = useContext(SecuritySessionContext);
+  if (ctx === null) {
+    throw new Error('useSecuritySession debe utilizarse dentro de SecurityGate.');
+  }
+  return ctx;
+}
 
 interface TimeoutOption {
   readonly label: string;
@@ -79,18 +104,16 @@ interface SecurityGateProps {
 }
 
 export function SecurityGate({ children }: SecurityGateProps) {
-  const { services, notifyDataChanged } = useAppServices();
+  const { services, isReady, notifyDataChanged } = useAppServices();
 
   const [requirement, setRequirement] = useState<AuthRequirement | null>(null);
   const [showPrivacyOverlay, setShowPrivacyOverlay] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Estado del formulario de desbloqueo
   const [unlockPassword, setUnlockPassword] = useState('');
   const [showUnlockPassword, setShowUnlockPassword] = useState(false);
 
-  // Estado del formulario de configuración inicial
   const [setupPrimary, setSetupPrimary] = useState('');
   const [setupPrimaryConfirm, setSetupPrimaryConfirm] = useState('');
   const [setupPanic, setSetupPanic] = useState('');
@@ -100,7 +123,6 @@ export function SecurityGate({ children }: SecurityGateProps) {
 
   const requirementRef = useRef<AuthRequirement | null>(null);
   const appStateRef = useRef<AppStateStatus>(normalizeAppState(AppState.currentState));
-  // Evito que la transición a "inactive" disparada por el diálogo nativo de Face ID reactive el bloqueo en bucle.
   const isBiometricPromptActiveRef = useRef(false);
 
   useEffect(() => {
@@ -154,7 +176,6 @@ export function SecurityGate({ children }: SecurityGateProps) {
       } catch (error: unknown) {
         const normalized = error instanceof Error ? error : new Error(String(error));
         logger.error('Error al evaluar política de autenticación', normalized);
-        // Ante cualquier error de lectura en Keychain aplico fail-closed exigiendo contraseña.
         setRequirement('PASSWORD_REQUIRED');
         setErrorMessage('Error al leer la configuración de seguridad.');
       }
@@ -162,12 +183,14 @@ export function SecurityGate({ children }: SecurityGateProps) {
     [services, attemptBiometricUnlock]
   );
 
-  // Arranque en frío: exige contraseña principal si ya existe configuración guardada.
+  // Espero a que SQLite termine de inicializarse antes de evaluar credenciales.
   useEffect(() => {
+    if (!isReady) {
+      return;
+    }
     void evaluateAccess(true);
-  }, [evaluateAccess]);
+  }, [isReady, evaluateAccess]);
 
-  // Ciclo de vida iOS/Android: Privacy Overlay y bloqueo automático al pasar a segundo plano.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (rawNextState: AppStateStatus) => {
       const nextState = normalizeAppState(rawNextState);
@@ -202,6 +225,60 @@ export function SecurityGate({ children }: SecurityGateProps) {
     };
   }, [services, evaluateAccess]);
 
+  const lockNow = useCallback(() => {
+    setUnlockPassword('');
+    setErrorMessage(null);
+    setRequirement('PASSWORD_REQUIRED');
+  }, []);
+
+  const resetVaultForDev = useCallback(async (): Promise<void> => {
+    // Bloqueo cualquier ejecución fuera de desarrollo para proteger builds de producción.
+    if (!__DEV__) {
+      return;
+    }
+    await services.securityRepository.clearAllCredentials();
+    setUnlockPassword('');
+    setSetupPrimary('');
+    setSetupPrimaryConfirm('');
+    setSetupPanic('');
+    setErrorMessage(null);
+    setRequirement('SETUP_REQUIRED');
+  }, [services]);
+
+  const handleConfirmDevReset = useCallback((): void => {
+    if (!__DEV__ || isBusy) {
+      return;
+    }
+
+    Alert.alert(
+      'Reiniciar Bóveda (DEV)',
+      'Se eliminarán las contraseñas del Keychain para volver a configurar "Blindá tu Kiosco". Los datos de SQLite se conservan.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Reiniciar claves',
+          style: 'destructive',
+          onPress: () => {
+            setIsBusy(true);
+            void resetVaultForDev()
+              .catch((error: unknown) => {
+                const normalized = error instanceof Error ? error : new Error(String(error));
+                logger.error('Fallo al reiniciar la bóveda desde pantalla de bloqueo', normalized);
+                setErrorMessage(
+                  error instanceof AppError
+                    ? error.message
+                    : 'No se pudo limpiar el Keychain de desarrollo.'
+                );
+              })
+              .finally(() => {
+                setIsBusy(false);
+              });
+          },
+        },
+      ]
+    );
+  }, [isBusy, resetVaultForDev]);
+
   const handlePasswordSubmit = async (): Promise<void> => {
     if (isBusy) {
       return;
@@ -213,7 +290,6 @@ export function SecurityGate({ children }: SecurityGateProps) {
     try {
       const outcome =
         await services.authenticateUserUseCase.authenticateWithPassword(unlockPassword);
-
       setUnlockPassword('');
 
       if (outcome.status === 'AUTHENTICATED') {
@@ -222,7 +298,6 @@ export function SecurityGate({ children }: SecurityGateProps) {
       }
 
       if (outcome.status === 'PANIC_WIPED') {
-        // Silencio absoluto (plausible deniability): invalido datos en memoria y abro el entorno limpio.
         notifyDataChanged();
         setRequirement('UNLOCKED');
         return;
@@ -279,285 +354,321 @@ export function SecurityGate({ children }: SecurityGateProps) {
     }
   };
 
-  if (requirement === null) {
-    return (
-      <SafeAreaView style={styles.centeredVault}>
-        <StatusBar style="light" />
-        <ActivityIndicator size="large" color={Colors.primaryLight} />
-      </SafeAreaView>
-    );
-  }
-
-  if (requirement === 'UNLOCKED') {
-    return (
-      <View style={styles.rootFlex}>
-        <StatusBar style="dark" />
-        {children}
-        <PrivacyOverlay visible={showPrivacyOverlay} />
-      </View>
-    );
-  }
-
-  if (requirement === 'SETUP_REQUIRED') {
-    return (
-      <SafeAreaView style={styles.vaultSafeArea}>
-        <StatusBar style="light" />
-        <KeyboardAvoidingView
-          style={styles.rootFlex}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.headerBlock}>
-              <View style={styles.badgePill}>
-                <View style={styles.liveDot} />
-                <Text style={styles.badgeText}>100% LOCAL · SIN NUBE</Text>
-              </View>
-              <Text style={styles.heroTitle}>Blindá tu Kiosco</Text>
-              <Text style={styles.subtitle}>
-                Creá tu clave maestra local. Tu inventario y cuentas quedan cifrados en este iPhone.
-              </Text>
-            </View>
-
-            <View style={styles.vaultCard}>
-              <ErrorBanner message={errorMessage} variant="dark" />
-
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.kicker}>ACCESO PRINCIPAL</Text>
-                <Pressable
-                  onPress={() => setShowSetupPasswords((prev) => !prev)}
-                  hitSlop={10}
-                  style={styles.toggleVisibilityBtn}
-                >
-                  <Ionicons
-                    name={showSetupPasswords ? 'eye-off-outline' : 'eye-outline'}
-                    size={16}
-                    color={Colors.vaultTextSecondary}
-                  />
-                  <Text style={styles.toggleVisibilityText}>
-                    {showSetupPasswords ? 'Ocultar' : 'Mostrar'}
-                  </Text>
-                </Pressable>
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Contraseña principal *</Text>
-                <TextInput
-                  style={styles.vaultInput}
-                  value={setupPrimary}
-                  onChangeText={setSetupPrimary}
-                  placeholder="Mínimo 4 caracteres"
-                  placeholderTextColor={Colors.vaultTextMuted}
-                  secureTextEntry={!showSetupPasswords}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Confirmar contraseña *</Text>
-                <TextInput
-                  style={styles.vaultInput}
-                  value={setupPrimaryConfirm}
-                  onChangeText={setSetupPrimaryConfirm}
-                  placeholder="Repetí tu clave maestra"
-                  placeholderTextColor={Colors.vaultTextMuted}
-                  secureTextEntry={!showSetupPasswords}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-
-              <View style={styles.divider} />
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.kicker}>PROTOCOLO DE PRIVACIDAD</Text>
-                <Text style={styles.label}>Clave de restablecimiento rápido (opcional)</Text>
-                <Text style={styles.helperText}>
-                  Debe ser distinta a la principal. Al ingresarla, limpia todos los registros en el
-                  acto sin alertas.
-                </Text>
-                <TextInput
-                  style={styles.vaultInput}
-                  value={setupPanic}
-                  onChangeText={setSetupPanic}
-                  placeholder="Opcional · dejar vacío para omitir"
-                  placeholderTextColor={Colors.vaultTextMuted}
-                  secureTextEntry={!showSetupPasswords}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-
-              <View style={styles.divider} />
-
-              <View style={styles.switchRow}>
-                <View style={styles.switchTextBlock}>
-                  <Text style={styles.label}>Desbloqueo ágil con Face ID</Text>
-                  <Text style={styles.helperText}>Disponible dentro de tu ventana de sesión</Text>
-                </View>
-                <Switch
-                  value={setupBiometricEnabled}
-                  onValueChange={setSetupBiometricEnabled}
-                  trackColor={{ false: Colors.vaultSurfaceElevated, true: Colors.primaryLight }}
-                  thumbColor={Colors.white}
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Exigir clave maestra tras inactividad</Text>
-                <View style={styles.chipRow}>
-                  {TIMEOUT_OPTIONS.map((option) => {
-                    const selected = setupTimeoutMs === option.ms;
-                    return (
-                      <Pressable
-                        key={option.ms}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        onPress={() => setSetupTimeoutMs(option.ms)}
-                      >
-                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.primaryButton,
-                  (pressed || isBusy) && styles.primaryButtonPressed,
-                ]}
-                onPress={() => void handleInitialSetupSubmit()}
-                disabled={isBusy}
-              >
-                {isBusy ? (
-                  <ActivityIndicator color={Colors.white} />
-                ) : (
-                  <>
-                    <Text style={styles.primaryButtonText}>Activar Bóveda</Text>
-                    <Ionicons name="arrow-forward" size={18} color={Colors.white} />
-                  </>
-                )}
-              </Pressable>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-        <PrivacyOverlay visible={showPrivacyOverlay} />
-      </SafeAreaView>
-    );
-  }
-
+  const isUnlocked = requirement === 'UNLOCKED';
   const canUseBiometrics = requirement === 'BIOMETRIC_OR_PASSWORD';
 
+  const sessionContextValue = useMemo<SecuritySessionContextValue>(
+    () => ({
+      isUnlocked,
+      lockNow,
+      resetVaultForDev,
+    }),
+    [isUnlocked, lockNow, resetVaultForDev]
+  );
+
   return (
-    <SafeAreaView style={styles.vaultSafeArea}>
-      <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.rootFlex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.lockScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.headerBlock}>
-            <View style={styles.emblemOuter}>
-              <View style={styles.emblemInner}>
-                <Ionicons
-                  name={canUseBiometrics ? 'scan-outline' : 'lock-closed'}
-                  size={30}
-                  color={Colors.primaryLight}
-                />
-              </View>
-            </View>
-            <Text style={styles.heroTitle}>Kiosco</Text>
-            <Text style={styles.subtitle}>
-              {canUseBiometrics
-                ? 'Verificá tu identidad con Face ID o ingresá tu clave.'
-                : 'Sesión bloqueada. Ingresá tu clave principal para continuar.'}
-            </Text>
+    <SecuritySessionContext.Provider value={sessionContextValue}>
+      <View style={styles.rootFlex}>
+        <StatusBar style={isUnlocked ? 'dark' : 'light'} />
+        {/* Mantengo el Stack de Expo Router siempre montado; las pantallas restringen consultas vía isUnlocked. */}
+        {children}
+
+        {requirement === null && (
+          <View style={[StyleSheet.absoluteFill, styles.gateOverlay]} pointerEvents="auto">
+            <SafeAreaView style={styles.centeredVault}>
+              <ActivityIndicator size="large" color={Colors.primaryLight} />
+            </SafeAreaView>
           </View>
+        )}
 
-          <View style={styles.vaultCard}>
-            <ErrorBanner message={errorMessage} variant="dark" />
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.kicker}>CREDENCIAL DE ACCESO</Text>
-              <View style={styles.passwordInputWrapper}>
-                <TextInput
-                  style={styles.passwordInputField}
-                  value={unlockPassword}
-                  onChangeText={setUnlockPassword}
-                  placeholder="Ingresá tu contraseña"
-                  placeholderTextColor={Colors.vaultTextMuted}
-                  secureTextEntry={!showUnlockPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  returnKeyType="done"
-                  onSubmitEditing={() => void handlePasswordSubmit()}
-                />
-                <Pressable
-                  onPress={() => setShowUnlockPassword((prev) => !prev)}
-                  hitSlop={10}
-                  style={styles.eyeIconButton}
-                >
-                  <Ionicons
-                    name={showUnlockPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={20}
-                    color={Colors.vaultTextSecondary}
-                  />
-                </Pressable>
-              </View>
-            </View>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.primaryButton,
-                (pressed || isBusy) && styles.primaryButtonPressed,
-              ]}
-              onPress={() => void handlePasswordSubmit()}
-              disabled={isBusy}
-            >
-              {isBusy ? (
-                <ActivityIndicator color={Colors.white} />
-              ) : (
-                <>
-                  <Text style={styles.primaryButtonText}>Desbloquear</Text>
-                  <Ionicons name="lock-open-outline" size={18} color={Colors.white} />
-                </>
-              )}
-            </Pressable>
-
-            {canUseBiometrics && (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.biometricButton,
-                  pressed && styles.biometricButtonPressed,
-                ]}
-                onPress={() => void attemptBiometricUnlock()}
-                disabled={isBusy}
+        {requirement === 'SETUP_REQUIRED' && (
+          <View style={[StyleSheet.absoluteFill, styles.gateOverlay]} pointerEvents="auto">
+            <SafeAreaView style={styles.vaultSafeArea}>
+              <KeyboardAvoidingView
+                style={styles.rootFlex}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               >
-                <Ionicons name="scan-outline" size={20} color={Colors.primaryLight} />
-                <Text style={styles.biometricButtonText}>Desbloquear con Face ID</Text>
-              </Pressable>
-            )}
+                <ScrollView
+                  contentContainerStyle={styles.scrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.headerBlock}>
+                    <View style={styles.badgePill}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.badgeText}>100% LOCAL · SIN NUBE</Text>
+                    </View>
+                    <Text style={styles.heroTitle}>Blindá tu Kiosco</Text>
+                    <Text style={styles.subtitle}>
+                      Creá tu clave maestra local. Tu inventario y cuentas quedan cifrados en este
+                      iPhone.
+                    </Text>
+                  </View>
+
+                  <View style={styles.vaultCard}>
+                    <ErrorBanner message={errorMessage} variant="dark" />
+
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.kicker}>ACCESO PRINCIPAL</Text>
+                      <Pressable
+                        onPress={() => setShowSetupPasswords((prev) => !prev)}
+                        hitSlop={10}
+                        style={styles.toggleVisibilityBtn}
+                      >
+                        <Ionicons
+                          name={showSetupPasswords ? 'eye-off-outline' : 'eye-outline'}
+                          size={16}
+                          color={Colors.vaultTextSecondary}
+                        />
+                        <Text style={styles.toggleVisibilityText}>
+                          {showSetupPasswords ? 'Ocultar' : 'Mostrar'}
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.label}>Contraseña principal *</Text>
+                      <TextInput
+                        style={styles.vaultInput}
+                        value={setupPrimary}
+                        onChangeText={setSetupPrimary}
+                        placeholder="Mínimo 4 caracteres"
+                        placeholderTextColor={Colors.vaultTextMuted}
+                        secureTextEntry={!showSetupPasswords}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.label}>Confirmar contraseña *</Text>
+                      <TextInput
+                        style={styles.vaultInput}
+                        value={setupPrimaryConfirm}
+                        onChangeText={setSetupPrimaryConfirm}
+                        placeholder="Repetí tu clave maestra"
+                        placeholderTextColor={Colors.vaultTextMuted}
+                        secureTextEntry={!showSetupPasswords}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.kicker}>PROTOCOLO DE PRIVACIDAD</Text>
+                      <Text style={styles.label}>Clave de restablecimiento rápido (opcional)</Text>
+                      <Text style={styles.helperText}>
+                        Debe ser distinta a la principal. Al ingresarla, limpia todos los registros
+                        en el acto sin alertas.
+                      </Text>
+                      <TextInput
+                        style={styles.vaultInput}
+                        value={setupPanic}
+                        onChangeText={setSetupPanic}
+                        placeholder="Opcional · dejar vacío para omitir"
+                        placeholderTextColor={Colors.vaultTextMuted}
+                        secureTextEntry={!showSetupPasswords}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.switchRow}>
+                      <View style={styles.switchTextBlock}>
+                        <Text style={styles.label}>Desbloqueo ágil con Face ID</Text>
+                        <Text style={styles.helperText}>
+                          Disponible dentro de tu ventana de sesión
+                        </Text>
+                      </View>
+                      <Switch
+                        value={setupBiometricEnabled}
+                        onValueChange={setSetupBiometricEnabled}
+                        trackColor={{
+                          false: Colors.vaultSurfaceElevated,
+                          true: Colors.primaryLight,
+                        }}
+                        thumbColor={Colors.white}
+                      />
+                    </View>
+
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.label}>Exigir clave maestra tras inactividad</Text>
+                      <View style={styles.chipRow}>
+                        {TIMEOUT_OPTIONS.map((option) => {
+                          const selected = setupTimeoutMs === option.ms;
+                          return (
+                            <Pressable
+                              key={option.ms}
+                              style={[styles.chip, selected && styles.chipSelected]}
+                              onPress={() => setSetupTimeoutMs(option.ms)}
+                            >
+                              <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                                {option.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.primaryButton,
+                        (pressed || isBusy) && styles.primaryButtonPressed,
+                      ]}
+                      onPress={() => void handleInitialSetupSubmit()}
+                      disabled={isBusy}
+                    >
+                      {isBusy ? (
+                        <ActivityIndicator color={Colors.white} />
+                      ) : (
+                        <>
+                          <Text style={styles.primaryButtonText}>Activar Bóveda</Text>
+                          <Ionicons name="arrow-forward" size={18} color={Colors.white} />
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+                </ScrollView>
+              </KeyboardAvoidingView>
+            </SafeAreaView>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-      <PrivacyOverlay visible={showPrivacyOverlay} />
-    </SafeAreaView>
+        )}
+
+        {(requirement === 'PASSWORD_REQUIRED' || requirement === 'BIOMETRIC_OR_PASSWORD') && (
+          <View style={[StyleSheet.absoluteFill, styles.gateOverlay]} pointerEvents="auto">
+            <SafeAreaView style={styles.vaultSafeArea}>
+              <KeyboardAvoidingView
+                style={styles.rootFlex}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              >
+                <ScrollView
+                  contentContainerStyle={styles.lockScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <View style={styles.headerBlock}>
+                    <View style={styles.emblemOuter}>
+                      <View style={styles.emblemInner}>
+                        <Ionicons
+                          name={canUseBiometrics ? 'scan-outline' : 'lock-closed'}
+                          size={30}
+                          color={Colors.primaryLight}
+                        />
+                      </View>
+                    </View>
+                    <Text style={styles.heroTitle}>Kiosco</Text>
+                    <Text style={styles.subtitle}>
+                      {canUseBiometrics
+                        ? 'Verificá tu identidad con Face ID o ingresá tu clave.'
+                        : 'Sesión bloqueada. Ingresá tu clave principal para continuar.'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.vaultCard}>
+                    <ErrorBanner message={errorMessage} variant="dark" />
+
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.kicker}>CREDENCIAL DE ACCESO</Text>
+                      <View style={styles.passwordInputWrapper}>
+                        <TextInput
+                          style={styles.passwordInputField}
+                          value={unlockPassword}
+                          onChangeText={setUnlockPassword}
+                          placeholder="Ingresá tu contraseña"
+                          placeholderTextColor={Colors.vaultTextMuted}
+                          secureTextEntry={!showUnlockPassword}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          returnKeyType="done"
+                          onSubmitEditing={() => void handlePasswordSubmit()}
+                        />
+                        <Pressable
+                          onPress={() => setShowUnlockPassword((prev) => !prev)}
+                          hitSlop={10}
+                          style={styles.eyeIconButton}
+                        >
+                          <Ionicons
+                            name={showUnlockPassword ? 'eye-off-outline' : 'eye-outline'}
+                            size={20}
+                            color={Colors.vaultTextSecondary}
+                          />
+                        </Pressable>
+                      </View>
+                    </View>
+
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.primaryButton,
+                        (pressed || isBusy) && styles.primaryButtonPressed,
+                      ]}
+                      onPress={() => void handlePasswordSubmit()}
+                      disabled={isBusy}
+                    >
+                      {isBusy ? (
+                        <ActivityIndicator color={Colors.white} />
+                      ) : (
+                        <>
+                          <Text style={styles.primaryButtonText}>Desbloquear</Text>
+                          <Ionicons name="lock-open-outline" size={18} color={Colors.white} />
+                        </>
+                      )}
+                    </Pressable>
+
+                    {canUseBiometrics && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.biometricButton,
+                          pressed && styles.biometricButtonPressed,
+                        ]}
+                        onPress={() => void attemptBiometricUnlock()}
+                        disabled={isBusy}
+                      >
+                        <Ionicons name="scan-outline" size={20} color={Colors.primaryLight} />
+                        <Text style={styles.biometricButtonText}>Desbloquear con Face ID</Text>
+                      </Pressable>
+                    )}
+
+                    {/* Expongo el reset desde el bloqueo únicamente en desarrollo para destrabar pruebas locales. */}
+                    {__DEV__ && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.devResetButton,
+                          pressed && styles.devResetButtonPressed,
+                        ]}
+                        onPress={handleConfirmDevReset}
+                        disabled={isBusy}
+                      >
+                        <Ionicons name="refresh-circle-outline" size={18} color="#FCA5A5" />
+                        <Text style={styles.devResetButtonText}>
+                          Reiniciar bóveda (Solo DEV)
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </ScrollView>
+              </KeyboardAvoidingView>
+            </SafeAreaView>
+          </View>
+        )}
+
+        <PrivacyOverlay visible={showPrivacyOverlay} />
+      </View>
+    </SecuritySessionContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
   rootFlex: {
     flex: 1,
+  },
+  gateOverlay: {
+    backgroundColor: Colors.vaultBackground,
+    zIndex: 9998,
   },
   vaultSafeArea: {
     flex: 1,
@@ -800,5 +911,25 @@ const styles = StyleSheet.create({
     color: Colors.vaultTextPrimary,
     fontSize: Typography.body,
     fontWeight: '600',
+  },
+  devResetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.dangerVaultBorder,
+    backgroundColor: Colors.dangerVaultBg,
+    paddingVertical: 12,
+    minHeight: 46,
+  },
+  devResetButtonPressed: {
+    opacity: 0.75,
+  },
+  devResetButtonText: {
+    color: '#FCA5A5',
+    fontSize: Typography.caption,
+    fontWeight: '700',
   },
 });

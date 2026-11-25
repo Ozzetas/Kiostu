@@ -5,10 +5,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Logger } from '../src/core/logging/Logger';
 import { SecurityGate } from '../src/presentation/components/SecurityGate';
 import { AppServicesProvider } from '../src/presentation/di/AppServicesProvider';
+import { Colors } from '../src/presentation/theme/tokens';
 
 const logger = new Logger('RootLayout');
 
-// Retengo la splash screen hasta finalizar la apertura y migración de SQLite.
 void SplashScreen.preventAutoHideAsync().catch((error: unknown) => {
   const normalized = error instanceof Error ? error : new Error(String(error));
   logger.warn('No se pudo retener la splash screen automáticamente', {
@@ -34,11 +34,22 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AppServicesProvider onReady={handleAppReady}>
         <SecurityGate>
-          <Stack screenOptions={{ headerShown: false }}>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: Colors.background },
+            }}
+          >
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen
-              name="modal"
-              options={{ presentation: 'modal', headerShown: true, title: 'Detalle' }}
+              name="modals/product-form"
+              options={{
+                presentation: 'modal',
+                headerShown: true,
+                title: 'Producto',
+                headerTintColor: Colors.textPrimary,
+                headerStyle: { backgroundColor: Colors.surface },
+              }}
             />
             <Stack.Screen name="+not-found" />
           </Stack>
