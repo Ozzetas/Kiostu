@@ -11,11 +11,13 @@ const CANCELLATION_ERRORS = new Set<string>([
   'user_fallback',
 ]);
 
+// Incluyo missing_usage_description para degradar limpiamente a contraseña cuando corremos en Expo Go en iOS.
 const UNAVAILABLE_ERRORS = new Set<string>([
   'not_available',
   'not_enrolled',
   'passcode_not_set',
   'lockout',
+  'missing_usage_description',
 ]);
 
 export class BiometricAuthAdapter implements IBiometricAuthenticator {

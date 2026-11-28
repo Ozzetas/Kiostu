@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -16,7 +17,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
 import { Logger } from '../../src/core/logging/Logger';
-import { Product } from '../../src/domain/entities/types';
+import { formatCentsToARS } from '../../src/core/utils/money';
+import { formatStockQty } from '../../src/core/utils/units';
+import { PaymentType, Product, SaleWithItems } from '../../src/domain/entities/types';
 import { ErrorBanner } from '../../src/presentation/components/ErrorBanner';
 import { ProductTile } from '../../src/presentation/components/ProductTile';
 import { useSecuritySession } from '../../src/presentation/components/SecurityGate';
@@ -26,6 +29,30 @@ import { Colors, Radius, Shadows, Spacing, Typography } from '../../src/presenta
 
 const logger = new Logger('CatalogScreen');
 
+function formatSaleDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return isoDate;
+  }
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function getPaymentLabel(paymentType: PaymentType): string {
+  switch (paymentType) {
+    case 'CASH':
+      return 'CONTADO';
+    case 'CREDIT':
+      return 'FIADO';
+    case 'MIXED':
+      return 'MIXTO';
+  }
+}
+
 export default function CatalogScreen() {
   const router = useRouter();
   const { services, notifyDataChanged } = useAppServices();
@@ -33,10 +60,21 @@ export default function CatalogScreen() {
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Modal de nueva categoría
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
+
+  // Modal de historial general de ventas (permite anular contado, fiado o mixto y devolver stock)
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [recentSales, setRecentSales] = useState<readonly SaleWithItems[]>([]);
+  const [customerNamesById, setCustomerNamesById] = useState<ReadonlyMap<string, string>>(
+    new Map()
+  );
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const { categories, products, isLoading, errorMessage, refresh } = useCatalog(selectedCategoryId);
 
@@ -53,8 +91,75 @@ export default function CatalogScreen() {
     [products]
   );
 
+  const loadRecentSales = useCallback(async (): Promise<void> => {
+    setIsLoadingHistory(true);
+    setHistoryError(null);
+    try {
+      const [sales, customers] = await Promise.all([
+        services.saleRepository.listRecentSales(50),
+        services.customerRepository.listActiveCustomers(),
+      ]);
+      setRecentSales(sales);
+      setCustomerNamesById(new Map(customers.map((c) => [c.id, c.fullName])));
+    } catch (error: unknown) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      logger.error('Error al cargar historial reciente de ventas', normalized);
+      setHistoryError(
+        error instanceof AppError ? error.message : 'No se pudo cargar el historial de ventas.'
+      );
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [services]);
+
+  const handleOpenHistory = (): void => {
+    setHistoryModalVisible(true);
+    void loadRecentSales();
+  };
+
+  const handleConfirmVoidSale = (sale: SaleWithItems): void => {
+    Alert.alert(
+      'Anular venta',
+      `¿Anular esta operación por ${formatCentsToARS(sale.totalCents)}? El stock se reintegrará automáticamente.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Anular venta',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await services.saleRepository.voidSaleAtomic(
+                  sale.id,
+                  'Anulada desde historial general'
+                );
+                notifyDataChanged();
+                await loadRecentSales();
+              } catch (error: unknown) {
+                const normalized = error instanceof Error ? error : new Error(String(error));
+                logger.error('Error al anular venta desde historial general', normalized, {
+                  saleId: sale.id,
+                });
+                setHistoryError(
+                  error instanceof AppError ? error.message : 'No se pudo anular la venta.'
+                );
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
   const handleOpenCreateProduct = (): void => {
     router.push('/modals/product-form');
+  };
+
+  const handleOpenCheckout = (product: Product): void => {
+    router.push({
+      pathname: '/modals/checkout-weight',
+      params: { productId: product.id },
+    });
   };
 
   const handleOpenEditProduct = (product: Product): void => {
@@ -101,14 +206,22 @@ export default function CatalogScreen() {
             <Text style={styles.kicker}>INVENTARIO LOCAL</Text>
             <Text style={styles.title}>Mi Kiosco</Text>
           </View>
-
-          <Pressable
-            style={({ pressed }) => [styles.lockButton, pressed && styles.lockButtonPressed]}
-            onPress={lockNow}
-            accessibilityLabel="Bloquear bóveda"
-          >
-            <Ionicons name="lock-closed-outline" size={20} color={Colors.textPrimary} />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              style={({ pressed }) => [styles.headerIconBtn, pressed && styles.headerIconBtnPressed]}
+              onPress={handleOpenHistory}
+              accessibilityLabel="Historial de ventas"
+            >
+              <Ionicons name="receipt-outline" size={20} color={Colors.textPrimary} />
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.headerIconBtn, pressed && styles.headerIconBtnPressed]}
+              onPress={lockNow}
+              accessibilityLabel="Bloquear bóveda"
+            >
+              <Ionicons name="lock-closed-outline" size={20} color={Colors.textPrimary} />
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.kpiRow}>
@@ -160,7 +273,7 @@ export default function CatalogScreen() {
                   selectedCategoryId === null && styles.categoryChipTextActive,
                 ]}
               >
-                Todos
+                Todas
               </Text>
             </Pressable>
 
@@ -188,7 +301,7 @@ export default function CatalogScreen() {
               }}
             >
               <Ionicons name="add" size={16} color={Colors.primary} />
-              <Text style={styles.addCategoryText}>Rubro</Text>
+              <Text style={styles.addCategoryText}>Categoría</Text>
             </Pressable>
           </ScrollView>
         </View>
@@ -213,8 +326,7 @@ export default function CatalogScreen() {
             <ProductTile
               product={item}
               resolvedImageUri={services.imageStorageService.resolveImageUri(item.imageUri)}
-              // En Fase 5B.2 el toque principal abrirá el modal de venta/fiado rápido; hoy abre edición/stock.
-              onPress={handleOpenEditProduct}
+              onPress={handleOpenCheckout}
               onEditPress={handleOpenEditProduct}
             />
           )}
@@ -230,15 +342,12 @@ export default function CatalogScreen() {
               </Text>
               <Text style={styles.emptySubtitle}>
                 {searchQuery.trim().length > 0
-                  ? 'Probá con otro nombre o quitá el filtro de rubro.'
+                  ? 'Probá con otro nombre o quitá el filtro de categoría.'
                   : 'Cargá tu primer producto con foto desde cámara, galería o internet.'}
               </Text>
               {searchQuery.trim().length === 0 && (
                 <Pressable
-                  style={({ pressed }) => [
-                    styles.emptyCta,
-                    pressed && styles.emptyCtaPressed,
-                  ]}
+                  style={({ pressed }) => [styles.emptyCta, pressed && styles.emptyCtaPressed]}
                   onPress={handleOpenCreateProduct}
                 >
                   <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
@@ -258,6 +367,7 @@ export default function CatalogScreen() {
         </Pressable>
       </View>
 
+      {/* Modal de nueva categoría */}
       <Modal
         visible={categoryModalVisible}
         transparent
@@ -266,13 +376,13 @@ export default function CatalogScreen() {
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Nuevo rubro o categoría</Text>
+            <Text style={styles.modalTitle}>Nueva categoría</Text>
             <ErrorBanner message={categoryError} />
             <TextInput
               style={styles.modalInput}
               value={newCategoryName}
               onChangeText={setNewCategoryName}
-              placeholder="Ej: Fiambrería, Alfombras, Bebidas..."
+              placeholder="Ej: Fiambrería, Alfombras, Relojes..."
               placeholderTextColor={Colors.textMuted}
               autoFocus
             />
@@ -299,6 +409,105 @@ export default function CatalogScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Modal de historial general de ventas (Contado, Fiado y Mixto) */}
+      <Modal
+        visible={historyModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setHistoryModalVisible(false)}
+      >
+        <SafeAreaView style={styles.historySafeArea} edges={['top', 'bottom']}>
+          <View style={styles.historyHeader}>
+            <View>
+              <Text style={styles.kicker}>MOVIMIENTOS RECIENTES</Text>
+              <Text style={styles.historyTitle}>Historial de ventas</Text>
+            </View>
+            <Pressable
+              style={styles.closeHistoryBtn}
+              onPress={() => setHistoryModalVisible(false)}
+            >
+              <Ionicons name="close" size={20} color={Colors.textPrimary} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.historyScroll}>
+            <ErrorBanner message={historyError} />
+
+            {isLoadingHistory ? (
+              <ActivityIndicator color={Colors.primary} style={styles.historyLoader} />
+            ) : recentSales.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons name="receipt-outline" size={30} color={Colors.primary} />
+                <Text style={styles.emptyTitle}>Sin ventas registradas</Text>
+                <Text style={styles.emptySubtitle}>
+                  Tocá cualquier producto del catálogo para registrar una venta contado o un fiado.
+                </Text>
+              </View>
+            ) : (
+              recentSales.map((sale) => {
+                const isVoided = sale.status === 'VOIDED';
+                const customerLabel =
+                  sale.customerId !== null
+                    ? (customerNamesById.get(sale.customerId) ?? 'Cliente')
+                    : 'Venta al contado';
+
+                return (
+                  <View
+                    key={sale.id}
+                    style={[styles.saleCard, isVoided && styles.saleCardVoided]}
+                  >
+                    <View style={styles.saleTopRow}>
+                      <Text style={styles.saleDate}>{formatSaleDate(sale.createdAt)}</Text>
+                      <View style={styles.saleBadges}>
+                        <View style={styles.modeBadge}>
+                          <Text style={styles.modeBadgeText}>
+                            {getPaymentLabel(sale.paymentType)}
+                          </Text>
+                        </View>
+                        {isVoided && (
+                          <View style={styles.voidedBadge}>
+                            <Text style={styles.voidedBadgeText}>ANULADA</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    <Text style={styles.saleCustomer}>{customerLabel}</Text>
+
+                    {sale.items.map((item) => (
+                      <View key={item.id} style={styles.saleItemRow}>
+                        <Text style={styles.saleItemName}>
+                          {formatStockQty(item.quantity, item.unitTypeSnapshot)} ·{' '}
+                          {item.productNameSnapshot}
+                        </Text>
+                        <Text style={styles.saleItemPrice}>
+                          {formatCentsToARS(item.subtotalCents)}
+                        </Text>
+                      </View>
+                    ))}
+
+                    <View style={styles.saleBottomRow}>
+                      <Text style={styles.saleTotalText}>
+                        Total: {formatCentsToARS(sale.totalCents)}
+                      </Text>
+                      {!isVoided && (
+                        <Pressable
+                          style={styles.voidSaleBtn}
+                          onPress={() => handleConfirmVoidSale(sale)}
+                        >
+                          <Ionicons name="close-circle-outline" size={16} color={Colors.danger} />
+                          <Text style={styles.voidSaleBtnText}>Anular venta</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -319,6 +528,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: Spacing.xs,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
   kicker: {
     fontSize: Typography.micro,
     fontWeight: '800',
@@ -331,7 +545,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     letterSpacing: -0.6,
   },
-  lockButton: {
+  headerIconBtn: {
     width: 44,
     height: 44,
     borderRadius: Radius.full,
@@ -342,7 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...Shadows.card,
   },
-  lockButtonPressed: {
+  headerIconBtnPressed: {
     backgroundColor: Colors.primarySoft,
   },
   kpiRow: {
@@ -572,5 +786,136 @@ const styles = StyleSheet.create({
     fontSize: Typography.body,
     fontWeight: '700',
     color: Colors.white,
+  },
+  historySafeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  historyTitle: {
+    fontSize: Typography.title,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  closeHistoryBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyScroll: {
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    paddingBottom: Spacing.xxl,
+  },
+  historyLoader: {
+    marginVertical: Spacing.xl,
+  },
+  saleCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.card,
+  },
+  saleCardVoided: {
+    opacity: 0.6,
+  },
+  saleTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  saleDate: {
+    fontSize: Typography.caption,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  saleBadges: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  modeBadge: {
+    backgroundColor: Colors.primarySoft,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+  },
+  modeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  voidedBadge: {
+    backgroundColor: Colors.dangerSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+  },
+  voidedBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.danger,
+  },
+  saleCustomer: {
+    fontSize: Typography.caption,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  saleItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
+  saleItemName: {
+    flex: 1,
+    fontSize: Typography.body,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  saleItemPrice: {
+    fontSize: Typography.body,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  saleBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  saleTotalText: {
+    fontSize: Typography.body,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  voidSaleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.dangerSoft,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+  },
+  voidSaleBtnText: {
+    fontSize: Typography.caption,
+    fontWeight: '800',
+    color: Colors.danger,
   },
 });

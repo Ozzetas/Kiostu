@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { ValidationError } from '../../core/errors/AppError';
 import { createSaltedHash, verifySaltedHash } from '../../core/utils/crypto';
 import {
-    MAX_SESSION_TIMEOUT_MS,
-    MIN_SESSION_TIMEOUT_MS,
-    SecurityPolicy,
+  MAX_SESSION_TIMEOUT_MS,
+  MIN_SESSION_TIMEOUT_MS,
+  SecurityPolicy,
 } from '../../domain/entities/security';
 import { ISecurityRepository } from '../../domain/repositories/ISecurityRepository';
 
@@ -58,20 +58,33 @@ export class ConfigureSecurityUseCase {
     await this.securityRepository.updateLastActivityAt(Date.now());
   }
 
-  public async updatePanicPassword(newPanicPassword: string | null): Promise<void> {
+  public async updatePanicPassword(
+    currentPrimaryPassword: string,
+    newPanicPassword: string | null
+  ): Promise<void> {
+    const primaryStored = await this.securityRepository.getPrimaryCredential();
+    if (!primaryStored) {
+      throw new ValidationError(
+        'Debe configurar primero una contraseña principal antes de administrar la clave de emergencia.'
+      );
+    }
+
+    // Exijo re-autenticación con la clave principal antes de crear, modificar o desactivar la clave de pánico.
+    if (currentPrimaryPassword.length === 0) {
+      throw new ValidationError('Ingresá tu contraseña principal actual para autorizar este cambio.');
+    }
+
+    const isAuthorized = await verifySaltedHash(currentPrimaryPassword, primaryStored, 'primary');
+    if (!isAuthorized) {
+      throw new ValidationError('La contraseña principal actual es incorrecta.');
+    }
+
     if (newPanicPassword === null || newPanicPassword.length === 0) {
       await this.securityRepository.deletePanicCredential();
       return;
     }
 
     const validatedPanic = this.validatePassword(newPanicPassword, 'contraseña de emergencia');
-    const primaryStored = await this.securityRepository.getPrimaryCredential();
-
-    if (!primaryStored) {
-      throw new ValidationError(
-        'Debe configurar primero una contraseña principal antes de definir una de emergencia.'
-      );
-    }
 
     // Verifico contra el hash almacenado para impedir colisión silenciosa entre ambas claves.
     const matchesPrimary = await verifySaltedHash(validatedPanic, primaryStored, 'primary');

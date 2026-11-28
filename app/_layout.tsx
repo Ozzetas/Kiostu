@@ -19,7 +19,7 @@ void SplashScreen.preventAutoHideAsync().catch((error: unknown) => {
 export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
+  anchor: '(tabs)',
 };
 
 export default function RootLayout() {
@@ -47,6 +47,16 @@ export default function RootLayout() {
                 presentation: 'modal',
                 headerShown: true,
                 title: 'Producto',
+                headerTintColor: Colors.textPrimary,
+                headerStyle: { backgroundColor: Colors.surface },
+              }}
+            />
+            <Stack.Screen
+              name="modals/checkout-weight"
+              options={{
+                presentation: 'modal',
+                headerShown: true,
+                title: 'Registrar venta / fiado',
                 headerTintColor: Colors.textPrimary,
                 headerStyle: { backgroundColor: Colors.surface },
               }}

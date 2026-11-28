@@ -8,6 +8,12 @@ import { ISecurityRepository } from '../../domain/repositories/ISecurityReposito
 export const PRODUCT_IMAGES_DIR_NAME = 'product_images';
 export const BACKUP_STAGING_DIR_NAME = 'backup_staging';
 
+const MEDIA_CACHE_DIR_NAMES: readonly string[] = [
+  BACKUP_STAGING_DIR_NAME,
+  'ImageManipulator',
+  'ImagePicker',
+];
+
 export class EmergencyWipeService {
   private readonly logger = new Logger('EmergencyWipeService');
 
@@ -22,9 +28,11 @@ export class EmergencyWipeService {
       await this.databaseClient.closeConnection();
       await SQLite.deleteDatabaseAsync(DB_FILE_NAME);
 
-      // 2. Elimino las carpetas locales de imágenes de productos y temporales de backup.
+      // 2. Elimino fotos persistidas y cachés temporales de cámara/recorte para no dejar residuos en disco.
       this.removeDirectoryIfExists(new Directory(Paths.document, PRODUCT_IMAGES_DIR_NAME));
-      this.removeDirectoryIfExists(new Directory(Paths.cache, BACKUP_STAGING_DIR_NAME));
+      for (const cacheDirName of MEDIA_CACHE_DIR_NAMES) {
+        this.removeDirectoryIfExists(new Directory(Paths.cache, cacheDirName));
+      }
 
       // 3. Elimino la credencial de pánico para no dejar evidencia de configuración de emergencia.
       await this.securityRepository.deletePanicCredential();
@@ -38,7 +46,6 @@ export class EmergencyWipeService {
       if (error instanceof SecurityError || error instanceof FileSystemError) {
         throw error;
       }
-
       const wipeError = new SecurityError(
         'EMERGENCY_WIPE_ERROR',
         'Fallo crítico durante el borrado físico de emergencia',

@@ -2,17 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
@@ -55,7 +55,6 @@ export default function ProductFormModal() {
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [existingProduct, setExistingProduct] = useState<Product | null>(null);
 
-  // Campos del formulario
   const [name, setName] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [unitType, setUnitType] = useState<UnitType>('UNIT');
@@ -66,11 +65,9 @@ export default function ProductFormModal() {
   const [imageFileName, setImageFileName] = useState<string | null>(null);
   const [originalImageFileName, setOriginalImageFileName] = useState<string | null>(null);
 
-  // Importación desde URL
   const [showUrlBox, setShowUrlBox] = useState(false);
   const [remoteImageUrl, setRemoteImageUrl] = useState('');
 
-  // Ajuste rápido de stock (solo en edición)
   const [adjustDeltaInput, setAdjustDeltaInput] = useState('');
   const [adjustDirection, setAdjustDirection] = useState<'ADD' | 'SUB'>('ADD');
   const [isAdjustingStock, setIsAdjustingStock] = useState(false);
@@ -127,7 +124,6 @@ export default function ProductFormModal() {
     }
 
     void loadFormData();
-
     return () => {
       isMounted = false;
     };
@@ -324,9 +320,7 @@ export default function ProductFormModal() {
                   productId: existingProduct.id,
                 });
                 setErrorMessage(
-                  error instanceof AppError
-                    ? error.message
-                    : 'No se pudo eliminar el producto.'
+                  error instanceof AppError ? error.message : 'No se pudo eliminar el producto.'
                 );
               }
             })();
@@ -359,10 +353,8 @@ export default function ProductFormModal() {
         >
           <ErrorBanner message={errorMessage} />
 
-          {/* Bloque de Imagen del Producto */}
           <View style={styles.bentoCard}>
             <Text style={styles.sectionKicker}>ÍCONO VISUAL (300×300)</Text>
-
             <View style={styles.mediaRow}>
               <View style={styles.previewBox}>
                 {isProcessingMedia ? (
@@ -373,7 +365,6 @@ export default function ProductFormModal() {
                   <Ionicons name="image-outline" size={32} color={Colors.textMuted} />
                 )}
               </View>
-
               <View style={styles.mediaButtonsCol}>
                 <Pressable
                   style={styles.mediaBtn}
@@ -383,7 +374,6 @@ export default function ProductFormModal() {
                   <Ionicons name="camera-outline" size={18} color={Colors.primary} />
                   <Text style={styles.mediaBtnText}>Sacar foto</Text>
                 </Pressable>
-
                 <Pressable
                   style={styles.mediaBtn}
                   onPress={() => void handlePickGallery()}
@@ -392,7 +382,6 @@ export default function ProductFormModal() {
                   <Ionicons name="images-outline" size={18} color={Colors.primary} />
                   <Text style={styles.mediaBtnText}>Galería</Text>
                 </Pressable>
-
                 <Pressable
                   style={styles.mediaBtn}
                   onPress={() => setShowUrlBox((prev) => !prev)}
@@ -426,7 +415,6 @@ export default function ProductFormModal() {
             )}
           </View>
 
-          {/* Datos principales */}
           <View style={styles.bentoCard}>
             <Text style={styles.sectionKicker}>DATOS DEL PRODUCTO</Text>
 
@@ -443,7 +431,7 @@ export default function ProductFormModal() {
 
             {categories.length > 0 && (
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Rubro / Categoría</Text>
+                <Text style={styles.label}>Categoría</Text>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -454,7 +442,7 @@ export default function ProductFormModal() {
                     onPress={() => setCategoryId(null)}
                   >
                     <Text style={[styles.pillText, categoryId === null && styles.pillTextActive]}>
-                      Sin rubro
+                      Sin categoría
                     </Text>
                   </Pressable>
                   {categories.map((cat) => {
@@ -542,7 +530,9 @@ export default function ProductFormModal() {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>
                 Precio en pesos ($) *{' '}
-                {unitType === 'GRAM' ? `(por ${priceBaseQty === 1000 ? '1 kg' : '100g'})` : '(por unidad)'}
+                {unitType === 'GRAM'
+                  ? `(por ${priceBaseQty === 1000 ? '1 kg' : '100g'})`
+                  : '(por unidad)'}
               </Text>
               <TextInput
                 style={styles.input}
@@ -570,7 +560,6 @@ export default function ProductFormModal() {
                   />
                 </View>
               )}
-
               <View style={[styles.fieldGroup, styles.flexOne]}>
                 <Text style={styles.label}>
                   Alerta stock bajo ({unitType === 'GRAM' ? 'gramos' : 'u.'})
@@ -587,7 +576,6 @@ export default function ProductFormModal() {
             </View>
           </View>
 
-          {/* Ajuste rápido de stock en modo edición */}
           {isEditing && existingProduct !== null && (
             <View style={styles.bentoCard}>
               <View style={styles.stockHeaderRow}>
@@ -596,7 +584,6 @@ export default function ProductFormModal() {
                   Actual: {formatStockQty(existingProduct.stockQty, existingProduct.unitType)}
                 </Text>
               </View>
-
               <View style={styles.segmentedRow}>
                 <Pressable
                   style={[styles.segmentBtn, adjustDirection === 'ADD' && styles.segmentBtnSuccess]}
@@ -625,7 +612,6 @@ export default function ProductFormModal() {
                   </Text>
                 </Pressable>
               </View>
-
               <View style={styles.urlRow}>
                 <TextInput
                   style={styles.urlInput}

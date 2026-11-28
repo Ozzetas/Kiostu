@@ -7,15 +7,14 @@ import { PRODUCT_IMAGES_DIR_NAME } from '../../application/services/EmergencyWip
 import { FileSystemError, MediaError, ValidationError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
 import {
-    IImageStorageService,
-    StoredImageResult,
+  IImageStorageService,
+  StoredImageResult,
 } from '../../domain/services/IImageStorageService';
 
 const ICON_DIMENSION_PX = 300;
 const JPEG_COMPRESS_QUALITY = 0.75;
 const DOWNLOAD_TIMEOUT_MS = 10_000;
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-
 const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_-]+\.jpg$/;
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set<string>([
@@ -134,8 +133,8 @@ export class ImageStorageService implements IImageStorageService {
     try {
       if (targetFile.exists) {
         targetFile.delete();
-        this.logger.info('Imagen de producto eliminada del almacenamiento local', { fileName });
       }
+      this.logger.info('Imagen de producto eliminada del almacenamiento local', { fileName });
     } catch (error: unknown) {
       const fsError = new FileSystemError(
         'Error al eliminar la imagen local del producto',
@@ -154,7 +153,6 @@ export class ImageStorageService implements IImageStorageService {
     }
 
     let removedCount = 0;
-
     try {
       const entries = imagesDir.list();
       for (const entry of entries) {
@@ -185,9 +183,9 @@ export class ImageStorageService implements IImageStorageService {
     const destinationFile = new File(imagesDir, fileName);
 
     let manipulatorContext: ReturnType<typeof ImageManipulator.manipulate> | null = null;
-    let renderedImage: Awaited<ReturnType<ReturnType<typeof ImageManipulator.manipulate>['renderAsync']>> | null =
-      null;
-    let processedTempFile: File | null = null;
+    let renderedImage: Awaited<
+      ReturnType<ReturnType<typeof ImageManipulator.manipulate>['renderAsync']>
+    > | null = null;
 
     try {
       manipulatorContext = ImageManipulator.manipulate(sourceUri);
@@ -199,7 +197,8 @@ export class ImageStorageService implements IImageStorageService {
         format: SaveFormat.JPEG,
       });
 
-      processedTempFile = new File(savedResult.uri);
+      // Copio sin borrar manualmente el caché de ImageManipulator para evitar condiciones de carrera con iOS.
+      const processedTempFile = new File(savedResult.uri);
       processedTempFile.copy(destinationFile);
 
       this.logger.info('Ícono de producto comprimido y persistido localmente', {
@@ -222,12 +221,8 @@ export class ImageStorageService implements IImageStorageService {
       this.logger.error(mediaError.message, mediaError);
       throw mediaError;
     } finally {
-      // Libero explícitamente bitmaps nativos y archivos temporales de caché para evitar fugas de memoria.
       renderedImage?.release();
       manipulatorContext?.release();
-      if (processedTempFile !== null) {
-        this.safeDeleteFile(processedTempFile);
-      }
     }
   }
 
@@ -237,7 +232,6 @@ export class ImageStorageService implements IImageStorageService {
 
     try {
       const response = await fetch(url, { signal: controller.signal });
-
       if (!response.ok) {
         throw new MediaError(
           'NETWORK_DOWNLOAD_ERROR',
