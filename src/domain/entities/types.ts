@@ -1,6 +1,7 @@
 export type UnitType = 'UNIT' | 'GRAM';
 export type PaymentType = 'CASH' | 'CREDIT' | 'MIXED';
 export type SaleStatus = 'COMPLETED' | 'VOIDED';
+export type SaleTier = 'RETAIL' | 'WHOLESALE';
 export type StockMovementType = 'IN_PURCHASE' | 'OUT_SALE' | 'ADJUSTMENT' | 'VOID_RETURN';
 
 export interface Category {
@@ -15,7 +16,9 @@ export interface Product {
   readonly categoryId: string | null;
   readonly name: string;
   readonly unitType: UnitType;
-  readonly unitPriceCents: number;
+  readonly costPriceCents: number;
+  readonly wholesalePriceCents: number;
+  readonly unitPriceCents: number; // Precio de venta al minoreo
   readonly priceBaseQty: number;
   readonly stockQty: number;
   readonly minStockAlert: number;
@@ -51,19 +54,24 @@ export interface SaleItem {
   readonly productId: string;
   readonly productNameSnapshot: string;
   readonly unitTypeSnapshot: UnitType;
+  readonly saleTier: SaleTier;
   readonly quantity: number;
   readonly unitPriceSnapshotCents: number;
+  readonly unitCostSnapshotCents: number;
   readonly priceBaseQtySnapshot: number;
   readonly subtotalCents: number;
+  readonly costSubtotalCents: number;
 }
 
 export interface SaleWithItems extends Sale {
   readonly items: readonly SaleItem[];
+  readonly directPaidCents: number;
 }
 
 export interface CustomerPayment {
   readonly id: string;
   readonly customerId: string;
+  readonly referenceSaleId: string | null;
   readonly amountCents: number;
   readonly notes: string | null;
   readonly createdAt: string;
@@ -85,4 +93,13 @@ export interface StockMovement {
   readonly referenceSaleId: string | null;
   readonly reason: string | null;
   readonly createdAt: string;
+}
+
+export interface FinancialSummary {
+  readonly pendingDebtCents: number;
+  readonly totalCollectedCents: number;
+  readonly realizedNetProfitCents: number;
+  readonly pendingNetProfitCents: number;
+  readonly totalBilledCents: number;
+  readonly totalCostCents: number;
 }

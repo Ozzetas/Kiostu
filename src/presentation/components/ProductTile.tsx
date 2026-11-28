@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { parseProductVisual } from '../../core/utils/productVisual';
 import { formatPriceLabel, formatStockQty } from '../../core/utils/units';
 import { Product } from '../../domain/entities/types';
 import { Colors, Radius, Shadows, Spacing, Typography } from '../theme/tokens';
@@ -24,9 +25,12 @@ export function ProductTile({
     setImageError(false);
   }, [resolvedImageUri]);
 
+  const visual = parseProductVisual(product.imageUri);
   const isLowStock = product.stockQty <= product.minStockAlert;
   const isOutOfStock = product.stockQty === 0;
-  const showImage = resolvedImageUri !== null && !imageError;
+  const showImage = visual.kind === 'IMAGE' && resolvedImageUri !== null && !imageError;
+  const hasDistinctWholesale =
+    product.wholesalePriceCents > 0 && product.wholesalePriceCents !== product.unitPriceCents;
 
   return (
     <Pressable
@@ -35,7 +39,11 @@ export function ProductTile({
       onLongPress={() => onEditPress(product)}
     >
       <View style={styles.mediaBox}>
-        {showImage ? (
+        {visual.kind === 'EMOJI' ? (
+          <View style={styles.emojiContainer}>
+            <Text style={styles.emojiText}>{visual.emoji}</Text>
+          </View>
+        ) : showImage ? (
           <Image
             source={{ uri: resolvedImageUri }}
             style={styles.image}
@@ -79,11 +87,15 @@ export function ProductTile({
         <Text style={styles.name} numberOfLines={2}>
           {product.name}
         </Text>
-
         <Text style={styles.price} numberOfLines={1}>
           {formatPriceLabel(product.unitPriceCents, product.unitType, product.priceBaseQty)}
         </Text>
-
+        {hasDistinctWholesale && (
+          <Text style={styles.wholesalePrice} numberOfLines={1}>
+            May.:{' '}
+            {formatPriceLabel(product.wholesalePriceCents, product.unitType, product.priceBaseQty)}
+          </Text>
+        )}
         <View
           style={[
             styles.stockBadge,
@@ -97,11 +109,7 @@ export function ProductTile({
           <View
             style={[
               styles.stockDot,
-              isOutOfStock
-                ? styles.dotDanger
-                : isLowStock
-                  ? styles.dotWarning
-                  : styles.dotOk,
+              isOutOfStock ? styles.dotDanger : isLowStock ? styles.dotWarning : styles.dotOk,
             ]}
           />
           <Text
@@ -147,6 +155,15 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  emojiContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primarySoft,
+  },
+  emojiText: {
+    fontSize: 54,
+  },
   placeholder: {
     flex: 1,
     alignItems: 'center',
@@ -162,10 +179,10 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
   },
   unitPillGram: {
-    backgroundColor: 'rgba(15, 23, 42, 0.82)',
+    backgroundColor: 'rgba(7, 11, 10, 0.85)',
   },
   unitPillUnit: {
-    backgroundColor: 'rgba(79, 70, 229, 0.88)',
+    backgroundColor: 'rgba(5, 150, 105, 0.92)',
   },
   unitPillText: {
     color: Colors.white,
@@ -191,7 +208,7 @@ const styles = StyleSheet.create({
   },
   infoBlock: {
     padding: Spacing.md,
-    gap: 6,
+    gap: 4,
   },
   name: {
     fontSize: Typography.body,
@@ -202,8 +219,13 @@ const styles = StyleSheet.create({
   },
   price: {
     fontSize: Typography.caption,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.primary,
+  },
+  wholesalePrice: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
   },
   stockBadge: {
     alignSelf: 'flex-start',
@@ -213,7 +235,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: Radius.full,
-    marginTop: 2,
+    marginTop: 4,
   },
   stockBadgeOk: {
     backgroundColor: Colors.successSoft,

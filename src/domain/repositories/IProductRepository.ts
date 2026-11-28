@@ -9,6 +9,8 @@ export interface CreateProductInput {
   readonly categoryId: string | null;
   readonly name: string;
   readonly unitType: UnitType;
+  readonly costPriceCents?: number;
+  readonly wholesalePriceCents?: number;
   readonly unitPriceCents: number;
   readonly priceBaseQty: number;
   readonly initialStockQty: number;
@@ -19,6 +21,8 @@ export interface CreateProductInput {
 export interface UpdateProductInput {
   readonly categoryId?: string | null;
   readonly name?: string;
+  readonly costPriceCents?: number;
+  readonly wholesalePriceCents?: number;
   readonly unitPriceCents?: number;
   readonly priceBaseQty?: number;
   readonly minStockAlert?: number;

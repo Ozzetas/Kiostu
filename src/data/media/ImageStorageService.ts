@@ -2,10 +2,10 @@ import * as Crypto from 'expo-crypto';
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { z } from 'zod';
 import { PRODUCT_IMAGES_DIR_NAME } from '../../application/services/EmergencyWipeService';
 import { FileSystemError, MediaError, ValidationError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
+import { isStoredImageFileName, parseProductVisual } from '../../core/utils/productVisual';
 import {
   IImageStorageService,
   StoredImageResult,
@@ -13,26 +13,6 @@ import {
 
 const ICON_DIMENSION_PX = 300;
 const JPEG_COMPRESS_QUALITY = 0.75;
-const DOWNLOAD_TIMEOUT_MS = 10_000;
-const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_-]+\.jpg$/;
-
-const ALLOWED_IMAGE_MIME_TYPES = new Set<string>([
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-]);
-
-const RemoteImageUrlSchema = z
-  .string()
-  .trim()
-  .url('La URL de la imagen no tiene un formato válido.')
-  .refine((value) => value.startsWith('https://') || value.startsWith('http://'), {
-    message: 'Solo se permiten enlaces HTTP o HTTPS para descargar imágenes.',
-  });
 
 export class ImageStorageService implements IImageStorageService {
   private readonly logger = new Logger('ImageStorageService');
@@ -91,41 +71,28 @@ export class ImageStorageService implements IImageStorageService {
     return this.processAndPersistIcon(selectedAsset.uri);
   }
 
-  public async importFromUrl(rawUrl: string): Promise<StoredImageResult> {
-    const parsedUrl = RemoteImageUrlSchema.safeParse(rawUrl);
-    if (!parsedUrl.success) {
-      const firstIssue = parsedUrl.error.issues[0]?.message ?? 'URL de imagen inválida.';
-      throw new ValidationError(firstIssue, { rawUrl });
-    }
-
-    const tempFile = new File(Paths.cache, `download_${Crypto.randomUUID()}.tmp`);
-
-    try {
-      const imageBytes = await this.downloadImageBytesWithTimeout(parsedUrl.data);
-      tempFile.write(imageBytes);
-      return await this.processAndPersistIcon(tempFile.uri);
-    } finally {
-      this.safeDeleteFile(tempFile);
-    }
-  }
-
   public resolveImageUri(fileName: string | null): string | null {
     if (fileName === null || fileName.length === 0) {
       return null;
     }
 
-    // Valido formato estricto para bloquear intentos de path traversal (ej. "../kiosco_ledger.db").
-    if (!SAFE_FILENAME_REGEX.test(fileName)) {
+    // Descarto emojis en silencio y bloqueo cualquier nombre malformado para evitar path traversal.
+    const visual = parseProductVisual(fileName);
+    if (visual.kind === 'EMOJI') {
+      return null;
+    }
+
+    if (visual.kind !== 'IMAGE') {
       this.logger.warn('Nombre de imagen inválido descartado al resolver URI', { fileName });
       return null;
     }
 
-    const targetFile = new File(this.getImagesDirectory(), fileName);
+    const targetFile = new File(this.getImagesDirectory(), visual.fileName);
     return targetFile.uri;
   }
 
   public async deleteImage(fileName: string): Promise<void> {
-    if (!SAFE_FILENAME_REGEX.test(fileName)) {
+    if (!isStoredImageFileName(fileName)) {
       throw new ValidationError('Nombre de archivo de imagen inválido.', { fileName });
     }
 
@@ -226,79 +193,6 @@ export class ImageStorageService implements IImageStorageService {
     }
   }
 
-  private async downloadImageBytesWithTimeout(url: string): Promise<Uint8Array> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) {
-        throw new MediaError(
-          'NETWORK_DOWNLOAD_ERROR',
-          `El servidor respondió con estado HTTP ${response.status} al descargar la imagen.`,
-          { url, status: response.status }
-        );
-      }
-
-      const rawContentType = response.headers.get('content-type') ?? '';
-      const normalizedMime = (rawContentType.split(';')[0] ?? '').trim().toLowerCase();
-      if (!ALLOWED_IMAGE_MIME_TYPES.has(normalizedMime)) {
-        throw new ValidationError('El enlace ingresado no corresponde a una imagen compatible.', {
-          url,
-          contentType: rawContentType,
-        });
-      }
-
-      const contentLengthHeader = response.headers.get('content-length');
-      if (contentLengthHeader !== null) {
-        const declaredBytes = Number(contentLengthHeader);
-        if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REMOTE_IMAGE_BYTES) {
-          throw new ValidationError('La imagen remota supera el límite permitido de 10 MB.', {
-            url,
-            declaredBytes,
-          });
-        }
-      }
-
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength === 0 || buffer.byteLength > MAX_REMOTE_IMAGE_BYTES) {
-        throw new ValidationError('El archivo descargado está vacío o supera el límite de 10 MB.', {
-          url,
-          byteLength: buffer.byteLength,
-        });
-      }
-
-      return new Uint8Array(buffer);
-    } catch (error: unknown) {
-      if (error instanceof MediaError || error instanceof ValidationError) {
-        this.logger.error(error.message, error);
-        throw error;
-      }
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        const timeoutError = new MediaError(
-          'NETWORK_TIMEOUT_ERROR',
-          'Tiempo de espera agotado al descargar la imagen desde internet.',
-          { url, timeoutMs: DOWNLOAD_TIMEOUT_MS },
-          error
-        );
-        this.logger.error(timeoutError.message, timeoutError);
-        throw timeoutError;
-      }
-
-      const netError = new MediaError(
-        'NETWORK_DOWNLOAD_ERROR',
-        'Error de red al intentar descargar la imagen.',
-        { url },
-        error
-      );
-      this.logger.error(netError.message, netError);
-      throw netError;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
   private getImagesDirectory(): Directory {
     return new Directory(Paths.document, PRODUCT_IMAGES_DIR_NAME);
   }
@@ -309,18 +203,5 @@ export class ImageStorageService implements IImageStorageService {
       dir.create({ intermediates: true });
     }
     return dir;
-  }
-
-  private safeDeleteFile(file: File): void {
-    try {
-      if (file.exists) {
-        file.delete();
-      }
-    } catch (error: unknown) {
-      this.logger.warn('No se pudo eliminar un archivo temporal de imagen', {
-        uri: file.uri,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 }

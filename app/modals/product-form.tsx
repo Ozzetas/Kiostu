@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,17 +17,45 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
 import { Logger } from '../../src/core/logging/Logger';
-import { parseCurrencyToCents } from '../../src/core/utils/money';
+import { formatCentsToUSD, parseCurrencyToCents } from '../../src/core/utils/money';
+import {
+  encodeEmojiVisual,
+  isStoredImageFileName,
+  parseProductVisual,
+} from '../../src/core/utils/productVisual';
 import { formatCentsForInput, formatStockQty } from '../../src/core/utils/units';
 import { Category, Product, UnitType } from '../../src/domain/entities/types';
+import { AgendaPaperBackground } from '../../src/presentation/components/AgendaPaperBackground';
 import { ErrorBanner } from '../../src/presentation/components/ErrorBanner';
+import {
+  GramPriceBaseOption,
+  PriceBaseSlider,
+} from '../../src/presentation/components/PriceBaseSlider';
 import { useAppServices } from '../../src/presentation/di/AppServicesProvider';
 import { Colors, Radius, Shadows, Spacing, Typography } from '../../src/presentation/theme/tokens';
 
 const logger = new Logger('ProductFormModal');
 
-function parseNonNegativeInt(raw: string, label: string): number {
+const EMOJI_PRESETS: readonly string[] = [
+  '🥩',
+  '🧀',
+  '🍞',
+  '🥤',
+  '🍫',
+  '☕',
+  '🧶',
+  '⌚',
+  '🍺',
+  '🍪',
+  '🧴',
+  '📦',
+];
+
+function parseOptionalNonNegativeInt(raw: string, label: string): number {
   const cleaned = raw.trim();
+  if (cleaned.length === 0) {
+    return 0;
+  }
   if (!/^\d+$/.test(cleaned)) {
     throw new Error(`${label} debe ser un número entero mayor o igual a 0.`);
   }
@@ -36,6 +64,39 @@ function parseNonNegativeInt(raw: string, label: string): number {
     throw new Error(`${label} excede el límite numérico permitido.`);
   }
   return value;
+}
+
+function tryParseCents(raw: string): number | null {
+  const cleaned = raw.trim();
+  if (cleaned.length === 0) {
+    return null;
+  }
+  try {
+    return parseCurrencyToCents(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+function formatPriceBaseDescription(unitType: UnitType, priceBaseQty: number): string {
+  if (unitType === 'UNIT') {
+    return 'por 1 unidad';
+  }
+  if (priceBaseQty === 1000) {
+    return 'por 1 kg (1000 g)';
+  }
+  if (priceBaseQty === 1) {
+    return 'por 1 gramo';
+  }
+  return `por ${priceBaseQty} gramos`;
+}
+
+function formatMarginPercent(profitCents: number, costCents: number): string | null {
+  if (costCents <= 0) {
+    return null;
+  }
+  const pct = Math.round((profitCents / costCents) * 100);
+  return `${pct >= 0 ? '+' : ''}${pct}%`;
 }
 
 export default function ProductFormModal() {
@@ -59,14 +120,19 @@ export default function ProductFormModal() {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [unitType, setUnitType] = useState<UnitType>('UNIT');
   const [priceBaseQty, setPriceBaseQty] = useState<number>(1);
-  const [priceInput, setPriceInput] = useState('');
-  const [initialStockInput, setInitialStockInput] = useState('0');
-  const [minStockAlertInput, setMinStockAlertInput] = useState('0');
-  const [imageFileName, setImageFileName] = useState<string | null>(null);
-  const [originalImageFileName, setOriginalImageFileName] = useState<string | null>(null);
 
-  const [showUrlBox, setShowUrlBox] = useState(false);
-  const [remoteImageUrl, setRemoteImageUrl] = useState('');
+  // Dejo los inputs numéricos vacíos con placeholder "0" para evitar escribir adelante de un cero inicial.
+  const [costPriceInput, setCostPriceInput] = useState('');
+  const [wholesalePriceInput, setWholesalePriceInput] = useState('');
+  const [retailPriceInput, setRetailPriceInput] = useState('');
+  const [initialStockInput, setInitialStockInput] = useState('');
+  const [minStockAlertInput, setMinStockAlertInput] = useState('');
+
+  const [imageValue, setImageValue] = useState<string | null>(null);
+  const [originalImageValue, setOriginalImageValue] = useState<string | null>(null);
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [customEmojiInput, setCustomEmojiInput] = useState('');
 
   const [adjustDeltaInput, setAdjustDeltaInput] = useState('');
   const [adjustDirection, setAdjustDirection] = useState<'ADD' | 'SUB'>('ADD');
@@ -102,10 +168,27 @@ export default function ProductFormModal() {
             setCategoryId(product.categoryId);
             setUnitType(product.unitType);
             setPriceBaseQty(product.priceBaseQty);
-            setPriceInput(formatCentsForInput(product.unitPriceCents));
-            setMinStockAlertInput(String(product.minStockAlert));
-            setImageFileName(product.imageUri);
-            setOriginalImageFileName(product.imageUri);
+            setCostPriceInput(
+              product.costPriceCents > 0 ? formatCentsForInput(product.costPriceCents) : ''
+            );
+            setWholesalePriceInput(
+              product.wholesalePriceCents > 0
+                ? formatCentsForInput(product.wholesalePriceCents)
+                : ''
+            );
+            setRetailPriceInput(
+              product.unitPriceCents > 0 ? formatCentsForInput(product.unitPriceCents) : ''
+            );
+            setMinStockAlertInput(
+              product.minStockAlert > 0 ? String(product.minStockAlert) : ''
+            );
+            setImageValue(product.imageUri);
+            setOriginalImageValue(product.imageUri);
+
+            const parsed = parseProductVisual(product.imageUri);
+            if (parsed.kind === 'EMOJI') {
+              setCustomEmojiInput(parsed.emoji);
+            }
           }
         }
       } catch (error: unknown) {
@@ -129,9 +212,46 @@ export default function ProductFormModal() {
     };
   }, [services, productId]);
 
+  // Limpio automáticamente el cero si el usuario enfoca un campo que quedó en "0".
+  const clearZeroOnFocus = (current: string, setter: (val: string) => void): void => {
+    if (current.trim() === '0') {
+      setter('');
+    }
+  };
+
+  // Remuevo ceros sobrantes a la izquierda en enteros (ej. si pega "05" pasa a "5").
+  const handleIntegerChange = (raw: string, setter: (val: string) => void): void => {
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    if (digitsOnly.length > 1 && digitsOnly.startsWith('0')) {
+      setter(digitsOnly.replace(/^0+/, '') || '0');
+      return;
+    }
+    setter(digitsOnly);
+  };
+
+  const livePricingPreview = useMemo(() => {
+    const costCents = tryParseCents(costPriceInput) ?? 0;
+    const retailCents = tryParseCents(retailPriceInput);
+    const wholesaleParsed = tryParseCents(wholesalePriceInput);
+    const effectiveWholesaleCents = wholesaleParsed ?? retailCents;
+
+    return {
+      costCents,
+      retailCents,
+      wholesaleCents: effectiveWholesaleCents,
+      retailProfitCents: retailCents !== null ? retailCents - costCents : null,
+      wholesaleProfitCents:
+        effectiveWholesaleCents !== null ? effectiveWholesaleCents - costCents : null,
+    };
+  }, [costPriceInput, wholesalePriceInput, retailPriceInput]);
+
   const handleSelectUnitType = (nextType: UnitType): void => {
     setUnitType(nextType);
     setPriceBaseQty(nextType === 'GRAM' ? 1000 : 1);
+  };
+
+  const handleSelectGramBase = (nextBase: GramPriceBaseOption): void => {
+    setPriceBaseQty(nextBase);
   };
 
   const handlePickCamera = async (): Promise<void> => {
@@ -140,15 +260,14 @@ export default function ProductFormModal() {
     try {
       const result = await services.imageStorageService.pickFromCamera();
       if (result !== null) {
-        setImageFileName(result.fileName);
-        setShowUrlBox(false);
+        setImageValue(result.fileName);
+        setCustomEmojiInput('');
+        setShowEmojiPicker(false);
       }
     } catch (error: unknown) {
       const normalized = error instanceof Error ? error : new Error(String(error));
       logger.error('Error al capturar foto con cámara', normalized);
-      setErrorMessage(
-        error instanceof AppError ? error.message : 'No se pudo capturar la imagen.'
-      );
+      setErrorMessage(error instanceof AppError ? error.message : 'No se pudo capturar la imagen.');
     } finally {
       setIsProcessingMedia(false);
     }
@@ -160,8 +279,9 @@ export default function ProductFormModal() {
     try {
       const result = await services.imageStorageService.pickFromGallery();
       if (result !== null) {
-        setImageFileName(result.fileName);
-        setShowUrlBox(false);
+        setImageValue(result.fileName);
+        setCustomEmojiInput('');
+        setShowEmojiPicker(false);
       }
     } catch (error: unknown) {
       const normalized = error instanceof Error ? error : new Error(String(error));
@@ -174,23 +294,25 @@ export default function ProductFormModal() {
     }
   };
 
-  const handleDownloadFromUrl = async (): Promise<void> => {
+  const handleSelectEmojiPreset = (emoji: string): void => {
     setErrorMessage(null);
-    setIsProcessingMedia(true);
-    try {
-      const result = await services.imageStorageService.importFromUrl(remoteImageUrl);
-      setImageFileName(result.fileName);
-      setRemoteImageUrl('');
-      setShowUrlBox(false);
-    } catch (error: unknown) {
-      const normalized = error instanceof Error ? error : new Error(String(error));
-      logger.error('Error al importar imagen desde URL', normalized);
-      setErrorMessage(
-        error instanceof AppError ? error.message : 'No se pudo descargar la imagen del enlace.'
-      );
-    } finally {
-      setIsProcessingMedia(false);
+    setCustomEmojiInput(emoji);
+    setImageValue(encodeEmojiVisual(emoji));
+  };
+
+  const handleCustomEmojiChange = (rawText: string): void => {
+    const cleaned = rawText.replace(/\s+/g, '').trim();
+    setCustomEmojiInput(cleaned);
+    if (cleaned.length > 0) {
+      setImageValue(encodeEmojiVisual(cleaned));
+    } else if (parseProductVisual(imageValue).kind === 'EMOJI') {
+      setImageValue(null);
     }
+  };
+
+  const handleClearVisual = (): void => {
+    setImageValue(null);
+    setCustomEmojiInput('');
   };
 
   const handleSave = async (): Promise<void> => {
@@ -208,34 +330,54 @@ export default function ProductFormModal() {
         return;
       }
 
-      const unitPriceCents = parseCurrencyToCents(priceInput);
-      const minStockAlert = parseNonNegativeInt(minStockAlertInput, 'La alerta de stock mínimo');
+      if (retailPriceInput.trim().length === 0) {
+        setErrorMessage('Ingresá el precio de venta al minoreo en USD$.');
+        return;
+      }
+
+      const retailPriceCents = parseCurrencyToCents(retailPriceInput);
+      const costPriceCents =
+        costPriceInput.trim().length > 0 ? parseCurrencyToCents(costPriceInput) : 0;
+      // Si el usuario no define precio de mayoreo aparte, hereda el de minoreo para no frenar el alta.
+      const wholesalePriceCents =
+        wholesalePriceInput.trim().length > 0
+          ? parseCurrencyToCents(wholesalePriceInput)
+          : retailPriceCents;
+
+      const minStockAlert = parseOptionalNonNegativeInt(
+        minStockAlertInput,
+        'La alerta de stock mínimo'
+      );
 
       if (isEditing && productId !== undefined) {
         await services.productRepository.updateProduct(productId, {
           name: cleanName,
           categoryId,
-          unitPriceCents,
+          costPriceCents,
+          wholesalePriceCents,
+          unitPriceCents: retailPriceCents,
           priceBaseQty,
           minStockAlert,
-          imageUri: imageFileName,
+          imageUri: imageValue,
         });
 
-        // Elimino la imagen reemplazada del disco para evitar archivos huérfanos.
-        if (originalImageFileName !== null && originalImageFileName !== imageFileName) {
-          await services.imageStorageService.deleteImage(originalImageFileName);
+        // Elimino del disco solo si el valor anterior era una foto real reemplazada (nunca un emoji).
+        if (isStoredImageFileName(originalImageValue) && originalImageValue !== imageValue) {
+          await services.imageStorageService.deleteImage(originalImageValue);
         }
       } else {
-        const initialStockQty = parseNonNegativeInt(initialStockInput, 'El stock inicial');
+        const initialStockQty = parseOptionalNonNegativeInt(initialStockInput, 'El stock inicial');
         await services.productRepository.createProduct({
           name: cleanName,
           categoryId,
           unitType,
-          unitPriceCents,
+          costPriceCents,
+          wholesalePriceCents,
+          unitPriceCents: retailPriceCents,
           priceBaseQty,
           initialStockQty,
           minStockAlert,
-          imageUri: imageFileName,
+          imageUri: imageValue,
         });
       }
 
@@ -263,7 +405,7 @@ export default function ProductFormModal() {
     setIsAdjustingStock(true);
 
     try {
-      const magnitude = parseNonNegativeInt(adjustDeltaInput, 'La cantidad de ajuste');
+      const magnitude = parseOptionalNonNegativeInt(adjustDeltaInput, 'La cantidad de ajuste');
       if (magnitude === 0) {
         setErrorMessage('Ingresá una cantidad mayor a cero para ajustar el stock.');
         return;
@@ -332,345 +474,477 @@ export default function ProductFormModal() {
 
   if (isLoadingInitial) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-      </SafeAreaView>
+      <AgendaPaperBackground>
+        <SafeAreaView style={styles.centered}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </SafeAreaView>
+      </AgendaPaperBackground>
     );
   }
 
-  const previewUri = services.imageStorageService.resolveImageUri(imageFileName);
+  const parsedVisual = parseProductVisual(imageValue);
+  const previewUri =
+    parsedVisual.kind === 'IMAGE'
+      ? services.imageStorageService.resolveImageUri(parsedVisual.fileName)
+      : null;
+  const priceBaseDesc = formatPriceBaseDescription(unitType, priceBaseQty);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flexOne}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+    <AgendaPaperBackground>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <KeyboardAvoidingView
+          style={styles.flexOne}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <ErrorBanner message={errorMessage} />
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <ErrorBanner message={errorMessage} />
 
-          <View style={styles.bentoCard}>
-            <Text style={styles.sectionKicker}>ÍCONO VISUAL (300×300)</Text>
-            <View style={styles.mediaRow}>
-              <View style={styles.previewBox}>
-                {isProcessingMedia ? (
-                  <ActivityIndicator color={Colors.primary} />
-                ) : previewUri !== null ? (
-                  <Image source={{ uri: previewUri }} style={styles.previewImage} />
-                ) : (
-                  <Ionicons name="image-outline" size={32} color={Colors.textMuted} />
+            {/* Ícono visual */}
+            <View style={styles.bentoCard}>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.sectionKicker}>ÍCONO VISUAL (100% LOCAL)</Text>
+                {imageValue !== null && (
+                  <Pressable onPress={handleClearVisual} hitSlop={8}>
+                    <Text style={styles.clearVisualText}>Quitar</Text>
+                  </Pressable>
                 )}
               </View>
-              <View style={styles.mediaButtonsCol}>
-                <Pressable
-                  style={styles.mediaBtn}
-                  onPress={() => void handlePickCamera()}
-                  disabled={isProcessingMedia}
-                >
-                  <Ionicons name="camera-outline" size={18} color={Colors.primary} />
-                  <Text style={styles.mediaBtnText}>Sacar foto</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.mediaBtn}
-                  onPress={() => void handlePickGallery()}
-                  disabled={isProcessingMedia}
-                >
-                  <Ionicons name="images-outline" size={18} color={Colors.primary} />
-                  <Text style={styles.mediaBtnText}>Galería</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.mediaBtn}
-                  onPress={() => setShowUrlBox((prev) => !prev)}
-                  disabled={isProcessingMedia}
-                >
-                  <Ionicons name="link-outline" size={18} color={Colors.primary} />
-                  <Text style={styles.mediaBtnText}>Desde internet (URL)</Text>
-                </Pressable>
-              </View>
-            </View>
 
-            {showUrlBox && (
-              <View style={styles.urlRow}>
-                <TextInput
-                  style={styles.urlInput}
-                  value={remoteImageUrl}
-                  onChangeText={setRemoteImageUrl}
-                  placeholder="https://... (JPG, PNG o WebP)"
-                  placeholderTextColor={Colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <Pressable
-                  style={styles.urlDownloadBtn}
-                  onPress={() => void handleDownloadFromUrl()}
-                  disabled={isProcessingMedia}
-                >
-                  <Text style={styles.urlDownloadText}>Bajar</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
+              <View style={styles.mediaRow}>
+                <View style={styles.previewBox}>
+                  {isProcessingMedia ? (
+                    <ActivityIndicator color={Colors.primary} />
+                  ) : parsedVisual.kind === 'EMOJI' ? (
+                    <Text style={styles.previewEmoji}>{parsedVisual.emoji}</Text>
+                  ) : previewUri !== null ? (
+                    <Image source={{ uri: previewUri }} style={styles.previewImage} />
+                  ) : (
+                    <Ionicons name="image-outline" size={32} color={Colors.textMuted} />
+                  )}
+                </View>
 
-          <View style={styles.bentoCard}>
-            <Text style={styles.sectionKicker}>DATOS DEL PRODUCTO</Text>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Nombre *</Text>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Ej: Jamón cocido, Alfombra 80x50, Coca-Cola..."
-                placeholderTextColor={Colors.textMuted}
-              />
-            </View>
-
-            {categories.length > 0 && (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Categoría</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.pillsRow}
-                >
+                <View style={styles.mediaButtonsCol}>
                   <Pressable
-                    style={[styles.pill, categoryId === null && styles.pillActive]}
-                    onPress={() => setCategoryId(null)}
+                    style={styles.mediaBtn}
+                    onPress={() => void handlePickCamera()}
+                    disabled={isProcessingMedia}
                   >
-                    <Text style={[styles.pillText, categoryId === null && styles.pillTextActive]}>
-                      Sin categoría
-                    </Text>
-                  </Pressable>
-                  {categories.map((cat) => {
-                    const active = categoryId === cat.id;
-                    return (
-                      <Pressable
-                        key={cat.id}
-                        style={[styles.pill, active && styles.pillActive]}
-                        onPress={() => setCategoryId(cat.id)}
-                      >
-                        <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                          {cat.name}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>
-                Forma de venta {isEditing ? '(bloqueada para preservar historial)' : '*'}
-              </Text>
-              <View style={styles.segmentedRow}>
-                <Pressable
-                  style={[styles.segmentBtn, unitType === 'UNIT' && styles.segmentBtnActive]}
-                  onPress={() => !isEditing && handleSelectUnitType('UNIT')}
-                  disabled={isEditing}
-                >
-                  <Text
-                    style={[styles.segmentText, unitType === 'UNIT' && styles.segmentTextActive]}
-                  >
-                    Por Unidad
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.segmentBtn, unitType === 'GRAM' && styles.segmentBtnActive]}
-                  onPress={() => !isEditing && handleSelectUnitType('GRAM')}
-                  disabled={isEditing}
-                >
-                  <Text
-                    style={[styles.segmentText, unitType === 'GRAM' && styles.segmentTextActive]}
-                  >
-                    Por Peso (gramos)
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-
-            {unitType === 'GRAM' && (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>El precio cargado corresponde a:</Text>
-                <View style={styles.segmentedRow}>
-                  <Pressable
-                    style={[styles.segmentBtn, priceBaseQty === 1000 && styles.segmentBtnActive]}
-                    onPress={() => setPriceBaseQty(1000)}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        priceBaseQty === 1000 && styles.segmentTextActive,
-                      ]}
-                    >
-                      1 kg (1000g)
-                    </Text>
+                    <Ionicons name="camera-outline" size={18} color={Colors.primary} />
+                    <Text style={styles.mediaBtnText}>Sacar foto</Text>
                   </Pressable>
                   <Pressable
-                    style={[styles.segmentBtn, priceBaseQty === 100 && styles.segmentBtnActive]}
-                    onPress={() => setPriceBaseQty(100)}
+                    style={styles.mediaBtn}
+                    onPress={() => void handlePickGallery()}
+                    disabled={isProcessingMedia}
                   >
+                    <Ionicons name="images-outline" size={18} color={Colors.primary} />
+                    <Text style={styles.mediaBtnText}>Galería</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.mediaBtn, showEmojiPicker && styles.mediaBtnActive]}
+                    onPress={() => setShowEmojiPicker((prev) => !prev)}
+                    disabled={isProcessingMedia}
+                  >
+                    <Ionicons
+                      name="happy-outline"
+                      size={18}
+                      color={showEmojiPicker ? Colors.white : Colors.primary}
+                    />
                     <Text
                       style={[
-                        styles.segmentText,
-                        priceBaseQty === 100 && styles.segmentTextActive,
+                        styles.mediaBtnText,
+                        showEmojiPicker && styles.mediaBtnTextActive,
                       ]}
                     >
-                      100 gramos
+                      Usar emoji
                     </Text>
                   </Pressable>
                 </View>
               </View>
-            )}
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>
-                Precio en pesos ($) *{' '}
-                {unitType === 'GRAM'
-                  ? `(por ${priceBaseQty === 1000 ? '1 kg' : '100g'})`
-                  : '(por unidad)'}
-              </Text>
-              <TextInput
-                style={styles.input}
-                value={priceInput}
-                onChangeText={setPriceInput}
-                placeholder="Ej: 25000 o 1500.50"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="decimal-pad"
-              />
+              {showEmojiPicker && (
+                <View style={styles.emojiPanel}>
+                  <Text style={styles.label}>
+                    Elegí un emoji rápido o usá el teclado del celular
+                  </Text>
+                  <View style={styles.emojiGrid}>
+                    {EMOJI_PRESETS.map((emoji) => {
+                      const active =
+                        parsedVisual.kind === 'EMOJI' && parsedVisual.emoji === emoji;
+                      return (
+                        <Pressable
+                          key={emoji}
+                          style={[styles.emojiChip, active && styles.emojiChipActive]}
+                          onPress={() => handleSelectEmojiPreset(emoji)}
+                        >
+                          <Text style={styles.emojiChipGlyph}>{emoji}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <TextInput
+                    style={styles.emojiInput}
+                    value={customEmojiInput}
+                    onChangeText={handleCustomEmojiChange}
+                    placeholder="Tocá acá y elegí cualquier emoji de tu teclado 😊"
+                    placeholderTextColor={Colors.textMuted}
+                    maxLength={12}
+                    autoCorrect={false}
+                  />
+                </View>
+              )}
             </View>
 
-            <View style={styles.twoCols}>
-              {!isEditing && (
+            {/* Datos generales y unidad */}
+            <View style={styles.bentoCard}>
+              <Text style={styles.sectionKicker}>DATOS DEL PRODUCTO</Text>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Nombre *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Ej: Manzana, Jamón cocido, Alfombra..."
+                  placeholderTextColor={Colors.textMuted}
+                />
+              </View>
+
+              {categories.length > 0 && (
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Categoría</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.pillsRow}
+                  >
+                    <Pressable
+                      style={[styles.pill, categoryId === null && styles.pillActive]}
+                      onPress={() => setCategoryId(null)}
+                    >
+                      <Text style={[styles.pillText, categoryId === null && styles.pillTextActive]}>
+                        Sin categoría
+                      </Text>
+                    </Pressable>
+                    {categories.map((cat) => {
+                      const active = categoryId === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          style={[styles.pill, active && styles.pillActive]}
+                          onPress={() => setCategoryId(cat.id)}
+                        >
+                          <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                            {cat.name}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>
+                  Forma de venta {isEditing ? '(bloqueada para preservar historial)' : '*'}
+                </Text>
+                <View style={styles.segmentedRow}>
+                  <Pressable
+                    style={[styles.segmentBtn, unitType === 'UNIT' && styles.segmentBtnActive]}
+                    onPress={() => !isEditing && handleSelectUnitType('UNIT')}
+                    disabled={isEditing}
+                  >
+                    <Text
+                      style={[styles.segmentText, unitType === 'UNIT' && styles.segmentTextActive]}
+                    >
+                      Por Unidad
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.segmentBtn, unitType === 'GRAM' && styles.segmentBtnActive]}
+                    onPress={() => !isEditing && handleSelectUnitType('GRAM')}
+                    disabled={isEditing}
+                  >
+                    <Text
+                      style={[styles.segmentText, unitType === 'GRAM' && styles.segmentTextActive]}
+                    >
+                      Por Peso (gramos)
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {unitType === 'GRAM' && (
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Deslizá para elegir la base de precio:</Text>
+                  <PriceBaseSlider value={priceBaseQty} onChange={handleSelectGramBase} />
+                </View>
+              )}
+            </View>
+
+            {/* Costo, Mayoreo, Minoreo y Rentabilidad en vivo */}
+            <View style={styles.bentoCard}>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.sectionKicker}>COSTO Y PRECIOS (USD$)</Text>
+                <Text style={styles.baseBadge}>{priceBaseDesc}</Text>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Costo real de compra (USD$)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={costPriceInput}
+                  onChangeText={setCostPriceInput}
+                  onFocus={() => clearZeroOnFocus(costPriceInput, setCostPriceInput)}
+                  selectTextOnFocus
+                  placeholder="0 (ej: 5)"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+
+              <View style={styles.twoCols}>
+                <View style={[styles.fieldGroup, styles.flexOne]}>
+                  <Text style={styles.label}>Venta Mayoreo (USD$)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={wholesalePriceInput}
+                    onChangeText={setWholesalePriceInput}
+                    onFocus={() => clearZeroOnFocus(wholesalePriceInput, setWholesalePriceInput)}
+                    selectTextOnFocus
+                    placeholder="Ej: 6"
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+
+                <View style={[styles.fieldGroup, styles.flexOne]}>
+                  <Text style={styles.label}>Venta Minoreo (USD$) *</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={retailPriceInput}
+                    onChangeText={setRetailPriceInput}
+                    onFocus={() => clearZeroOnFocus(retailPriceInput, setRetailPriceInput)}
+                    selectTextOnFocus
+                    placeholder="Ej: 9"
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+
+              {livePricingPreview.retailCents !== null && (
+                <View style={styles.marginBox}>
+                  <Text style={styles.marginBoxKicker}>
+                    GANANCIA REAL ESTIMADA ({priceBaseDesc.toUpperCase()})
+                  </Text>
+                  <View style={styles.marginRow}>
+                    <View style={styles.marginTile}>
+                      <Text style={styles.marginTileLabel}>MAYOREO</Text>
+                      <Text
+                        style={[
+                          styles.marginTileValue,
+                          (livePricingPreview.wholesaleProfitCents ?? 0) < 0 &&
+                            styles.marginNegative,
+                        ]}
+                      >
+                        {formatCentsToUSD(livePricingPreview.wholesaleProfitCents ?? 0)}
+                      </Text>
+                      {livePricingPreview.wholesaleProfitCents !== null &&
+                        formatMarginPercent(
+                          livePricingPreview.wholesaleProfitCents,
+                          livePricingPreview.costCents
+                        ) !== null && (
+                          <Text style={styles.marginTilePct}>
+                            {formatMarginPercent(
+                              livePricingPreview.wholesaleProfitCents,
+                              livePricingPreview.costCents
+                            )}{' '}
+                            sobre costo
+                          </Text>
+                        )}
+                    </View>
+
+                    <View style={styles.marginDivider} />
+
+                    <View style={styles.marginTile}>
+                      <Text style={styles.marginTileLabel}>MINOREO</Text>
+                      <Text
+                        style={[
+                          styles.marginTileValue,
+                          (livePricingPreview.retailProfitCents ?? 0) < 0 && styles.marginNegative,
+                        ]}
+                      >
+                        {formatCentsToUSD(livePricingPreview.retailProfitCents ?? 0)}
+                      </Text>
+                      {livePricingPreview.retailProfitCents !== null &&
+                        formatMarginPercent(
+                          livePricingPreview.retailProfitCents,
+                          livePricingPreview.costCents
+                        ) !== null && (
+                          <Text style={styles.marginTilePct}>
+                            {formatMarginPercent(
+                              livePricingPreview.retailProfitCents,
+                              livePricingPreview.costCents
+                            )}{' '}
+                            sobre costo
+                          </Text>
+                        )}
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Stock */}
+            <View style={styles.bentoCard}>
+              <Text style={styles.sectionKicker}>INVENTARIO Y ALERTAS</Text>
+              <View style={styles.twoCols}>
+                {!isEditing && (
+                  <View style={[styles.fieldGroup, styles.flexOne]}>
+                    <Text style={styles.label}>
+                      Stock inicial ({unitType === 'GRAM' ? 'gramos' : 'u.'})
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      value={initialStockInput}
+                      onChangeText={(txt) => handleIntegerChange(txt, setInitialStockInput)}
+                      onFocus={() => clearZeroOnFocus(initialStockInput, setInitialStockInput)}
+                      selectTextOnFocus
+                      placeholder="0"
+                      placeholderTextColor={Colors.textMuted}
+                      keyboardType="number-pad"
+                    />
+                  </View>
+                )}
                 <View style={[styles.fieldGroup, styles.flexOne]}>
                   <Text style={styles.label}>
-                    Stock inicial ({unitType === 'GRAM' ? 'gramos' : 'u.'})
+                    Alerta stock bajo ({unitType === 'GRAM' ? 'gramos' : 'u.'})
                   </Text>
                   <TextInput
                     style={styles.input}
-                    value={initialStockInput}
-                    onChangeText={setInitialStockInput}
-                    placeholder={unitType === 'GRAM' ? 'Ej: 3000' : 'Ej: 20'}
+                    value={minStockAlertInput}
+                    onChangeText={(txt) => handleIntegerChange(txt, setMinStockAlertInput)}
+                    onFocus={() => clearZeroOnFocus(minStockAlertInput, setMinStockAlertInput)}
+                    selectTextOnFocus
+                    placeholder="0"
                     placeholderTextColor={Colors.textMuted}
                     keyboardType="number-pad"
                   />
                 </View>
-              )}
-              <View style={[styles.fieldGroup, styles.flexOne]}>
-                <Text style={styles.label}>
-                  Alerta stock bajo ({unitType === 'GRAM' ? 'gramos' : 'u.'})
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={minStockAlertInput}
-                  onChangeText={setMinStockAlertInput}
-                  placeholder={unitType === 'GRAM' ? 'Ej: 500' : 'Ej: 5'}
-                  placeholderTextColor={Colors.textMuted}
-                  keyboardType="number-pad"
-                />
               </View>
             </View>
-          </View>
 
-          {isEditing && existingProduct !== null && (
-            <View style={styles.bentoCard}>
-              <View style={styles.stockHeaderRow}>
-                <Text style={styles.sectionKicker}>MOVIMIENTO DE STOCK</Text>
-                <Text style={styles.currentStockBadge}>
-                  Actual: {formatStockQty(existingProduct.stockQty, existingProduct.unitType)}
-                </Text>
-              </View>
-              <View style={styles.segmentedRow}>
-                <Pressable
-                  style={[styles.segmentBtn, adjustDirection === 'ADD' && styles.segmentBtnSuccess]}
-                  onPress={() => setAdjustDirection('ADD')}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      adjustDirection === 'ADD' && styles.segmentTextActive,
-                    ]}
-                  >
-                    + Reponer
+            {isEditing && existingProduct !== null && (
+              <View style={styles.bentoCard}>
+                <View style={styles.stockHeaderRow}>
+                  <Text style={styles.sectionKicker}>MOVIMIENTO DE STOCK</Text>
+                  <Text style={styles.currentStockBadge}>
+                    Actual: {formatStockQty(existingProduct.stockQty, existingProduct.unitType)}
                   </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.segmentBtn, adjustDirection === 'SUB' && styles.segmentBtnDanger]}
-                  onPress={() => setAdjustDirection('SUB')}
-                >
-                  <Text
+                </View>
+                <View style={styles.segmentedRow}>
+                  <Pressable
                     style={[
-                      styles.segmentText,
-                      adjustDirection === 'SUB' && styles.segmentTextActive,
+                      styles.segmentBtn,
+                      adjustDirection === 'ADD' && styles.segmentBtnSuccess,
                     ]}
+                    onPress={() => setAdjustDirection('ADD')}
                   >
-                    - Descontar
-                  </Text>
-                </Pressable>
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        adjustDirection === 'ADD' && styles.segmentTextActive,
+                      ]}
+                    >
+                      + Reponer
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.segmentBtn,
+                      adjustDirection === 'SUB' && styles.segmentBtnDanger,
+                    ]}
+                    onPress={() => setAdjustDirection('SUB')}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        adjustDirection === 'SUB' && styles.segmentTextActive,
+                      ]}
+                    >
+                      - Descontar
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.adjustRow}>
+                  <TextInput
+                    style={styles.adjustInput}
+                    value={adjustDeltaInput}
+                    onChangeText={(txt) => handleIntegerChange(txt, setAdjustDeltaInput)}
+                    onFocus={() => clearZeroOnFocus(adjustDeltaInput, setAdjustDeltaInput)}
+                    selectTextOnFocus
+                    placeholder={
+                      existingProduct.unitType === 'GRAM'
+                        ? 'Cantidad en gramos'
+                        : 'Cantidad en u.'
+                    }
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="number-pad"
+                  />
+                  <Pressable
+                    style={styles.adjustApplyBtn}
+                    onPress={() => void handleAdjustStock()}
+                    disabled={isAdjustingStock}
+                  >
+                    {isAdjustingStock ? (
+                      <ActivityIndicator color={Colors.white} size="small" />
+                    ) : (
+                      <Text style={styles.adjustApplyText}>Aplicar</Text>
+                    )}
+                  </Pressable>
+                </View>
               </View>
-              <View style={styles.urlRow}>
-                <TextInput
-                  style={styles.urlInput}
-                  value={adjustDeltaInput}
-                  onChangeText={setAdjustDeltaInput}
-                  placeholder={
-                    existingProduct.unitType === 'GRAM' ? 'Cantidad en gramos' : 'Cantidad en u.'
-                  }
-                  placeholderTextColor={Colors.textMuted}
-                  keyboardType="number-pad"
-                />
-                <Pressable
-                  style={styles.urlDownloadBtn}
-                  onPress={() => void handleAdjustStock()}
-                  disabled={isAdjustingStock}
-                >
-                  {isAdjustingStock ? (
-                    <ActivityIndicator color={Colors.white} size="small" />
-                  ) : (
-                    <Text style={styles.urlDownloadText}>Aplicar</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          )}
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.saveButton,
-              (pressed || isSaving) && styles.saveButtonPressed,
-            ]}
-            onPress={() => void handleSave()}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={Colors.white} />
-            ) : (
-              <Text style={styles.saveButtonText}>
-                {isEditing ? 'Guardar cambios' : 'Crear producto'}
-              </Text>
             )}
-          </Pressable>
 
-          {isEditing && existingProduct !== null && (
-            <Pressable style={styles.deleteButton} onPress={handleConfirmDelete}>
-              <Ionicons name="trash-outline" size={18} color={Colors.danger} />
-              <Text style={styles.deleteButtonText}>Quitar del catálogo</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.saveButton,
+                (pressed || isSaving) && styles.saveButtonPressed,
+              ]}
+              onPress={() => void handleSave()}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <Text style={styles.saveButtonText}>
+                  {isEditing ? 'Guardar cambios' : 'Crear producto'}
+                </Text>
+              )}
             </Pressable>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+
+            {isEditing && existingProduct !== null && (
+              <Pressable style={styles.deleteButton} onPress={handleConfirmDelete}>
+                <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+                <Text style={styles.deleteButtonText}>Quitar del catálogo</Text>
+              </Pressable>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </AgendaPaperBackground>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   flexOne: {
     flex: 1,
@@ -679,7 +953,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   scrollContent: {
     padding: Spacing.lg,
@@ -695,11 +969,31 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     ...Shadows.card,
   },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
   sectionKicker: {
     fontSize: Typography.micro,
     fontWeight: '800',
     color: Colors.primary,
     letterSpacing: 1,
+  },
+  baseBadge: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    backgroundColor: Colors.surfaceElevated,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+  },
+  clearVisualText: {
+    fontSize: Typography.caption,
+    fontWeight: '700',
+    color: Colors.danger,
   },
   mediaRow: {
     flexDirection: 'row',
@@ -721,6 +1015,9 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  previewEmoji: {
+    fontSize: 54,
+  },
   mediaButtonsCol: {
     flex: 1,
     gap: Spacing.sm,
@@ -734,17 +1031,108 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: Radius.md,
   },
+  mediaBtnActive: {
+    backgroundColor: Colors.primary,
+  },
   mediaBtnText: {
     fontSize: Typography.caption,
     fontWeight: '700',
     color: Colors.primary,
   },
-  urlRow: {
+  mediaBtnTextActive: {
+    color: Colors.white,
+  },
+  emojiPanel: {
+    gap: Spacing.sm,
+    paddingTop: Spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  emojiChip: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emojiChipActive: {
+    backgroundColor: Colors.primarySoft,
+    borderColor: Colors.primary,
+  },
+  emojiChipGlyph: {
+    fontSize: 24,
+  },
+  emojiInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 11,
+    fontSize: Typography.body,
+    color: Colors.textPrimary,
+    backgroundColor: Colors.background,
+  },
+  marginBox: {
+    backgroundColor: Colors.vaultBackground,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.vaultBorderHighlight,
+  },
+  marginBoxKicker: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.vaultTextSecondary,
+    letterSpacing: 1,
+  },
+  marginRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  marginTile: {
+    flex: 1,
+    gap: 2,
+  },
+  marginDivider: {
+    width: 1,
+    height: 44,
+    backgroundColor: Colors.vaultBorderHighlight,
+    marginHorizontal: Spacing.md,
+  },
+  marginTileLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.gold,
+    letterSpacing: 0.8,
+  },
+  marginTileValue: {
+    fontSize: Typography.subtitle,
+    fontWeight: '800',
+    color: Colors.primaryLight,
+  },
+  marginNegative: {
+    color: '#FCA5A5',
+  },
+  marginTilePct: {
+    fontSize: 11,
+    color: Colors.vaultTextSecondary,
+    fontWeight: '600',
+  },
+  adjustRow: {
     flexDirection: 'row',
     gap: Spacing.sm,
     alignItems: 'center',
   },
-  urlInput: {
+  adjustInput: {
     flex: 1,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -755,7 +1143,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     backgroundColor: Colors.background,
   },
-  urlDownloadBtn: {
+  adjustApplyBtn: {
     backgroundColor: Colors.textPrimary,
     paddingHorizontal: Spacing.lg,
     paddingVertical: 12,
@@ -763,7 +1151,7 @@ const styles = StyleSheet.create({
     minWidth: 80,
     alignItems: 'center',
   },
-  urlDownloadText: {
+  adjustApplyText: {
     color: Colors.white,
     fontSize: Typography.caption,
     fontWeight: '700',

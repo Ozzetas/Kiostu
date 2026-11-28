@@ -2,16 +2,13 @@ import { ArithmeticOverflowError, ValidationError } from '../errors/AppError';
 
 const CURRENCY_INPUT_REGEX = /^\d+([.,]\d{1,2})?$/;
 
-const ARS_FORMATTER = new Intl.NumberFormat('es-AR', {
-  style: 'currency',
-  currency: 'ARS',
+const USD_NUMBER_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
 export function parseCurrencyToCents(rawInput: string): number {
   const cleaned = rawInput.trim();
-
   if (!CURRENCY_INPUT_REGEX.test(cleaned)) {
     throw new ValidationError('Formato monetario inválido. Usar hasta 2 decimales.', {
       rawInput,
@@ -65,9 +62,13 @@ export function calculateLineSubtotalCents(
   return Math.round(numerator / priceBaseQty);
 }
 
-export function formatCentsToARS(cents: number): string {
+export function formatCentsToUSD(cents: number): string {
   if (!Number.isSafeInteger(cents)) {
     throw new ValidationError('Los centavos a formatear deben ser un entero seguro.', { cents });
   }
-  return ARS_FORMATTER.format(cents / 100);
+
+  // Prefijo explícito "USD$" para no depender de variaciones regionales de Intl en iOS.
+  const isNegative = cents < 0;
+  const formattedNumber = USD_NUMBER_FORMATTER.format(Math.abs(cents) / 100);
+  return isNegative ? `-USD$ ${formattedNumber}` : `USD$ ${formattedNumber}`;
 }

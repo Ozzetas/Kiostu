@@ -1,5 +1,5 @@
 import { UnitType } from '../../domain/entities/types';
-import { formatCentsToARS } from './money';
+import { formatCentsToUSD } from './money';
 
 export function formatStockQty(qty: number, unitType: UnitType): string {
   if (unitType === 'UNIT') {
@@ -20,24 +20,21 @@ export function formatPriceLabel(
   unitType: UnitType,
   priceBaseQty: number
 ): string {
-  const formattedPrice = formatCentsToARS(unitPriceCents);
-
+  const formattedPrice = formatCentsToUSD(unitPriceCents);
   if (unitType === 'UNIT') {
     return `${formattedPrice} / u.`;
   }
-
   if (priceBaseQty === 1000) {
     return `${formattedPrice} / kg`;
   }
-
   return `${formattedPrice} / ${priceBaseQty}g`;
 }
 
 export function formatCentsForInput(cents: number): string {
-  const pesos = Math.floor(cents / 100);
+  const dollars = Math.floor(cents / 100);
   const remainder = cents % 100;
   if (remainder === 0) {
-    return String(pesos);
+    return String(dollars);
   }
-  return `${pesos}.${String(remainder).padStart(2, '0')}`;
+  return `${dollars}.${String(remainder).padStart(2, '0')}`;
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ArithmeticOverflowError, ValidationError } from '../../core/errors/AppError';
-import { SaleWithItems } from '../../domain/entities/types';
+import { SaleTier, SaleWithItems } from '../../domain/entities/types';
 import { ISaleRepository, SaleLineInput } from '../../domain/repositories/ISaleRepository';
 
 const RegisterSaleSchema = z.object({
@@ -15,6 +15,7 @@ const RegisterSaleSchema = z.object({
           .number()
           .int('La cantidad debe ser un entero (unidades o gramos).')
           .positive('La cantidad debe ser mayor a cero.'),
+        saleTier: z.enum(['RETAIL', 'WHOLESALE']).optional().default('RETAIL'),
       })
     )
     .min(1, 'La venta debe contener al menos un producto.'),
@@ -51,22 +52,24 @@ export class RegisterSaleUseCase {
   }
 
   private mergeDuplicateProducts(items: readonly SaleLineInput[]): SaleLineInput[] {
-    // Agrupo líneas repetidas del mismo producto para validar stock acumulado en una sola operación.
-    const quantityByProduct = new Map<string, number>();
+    // Agrupo líneas repetidas del mismo producto y misma modalidad (minoreo/mayoreo) para validar stock acumulado.
+    const grouped = new Map<string, { productId: string; saleTier: SaleTier; quantity: number }>();
 
     for (const item of items) {
-      const accumulated = (quantityByProduct.get(item.productId) ?? 0) + item.quantity;
+      const tier: SaleTier = item.saleTier ?? 'RETAIL';
+      const key = `${item.productId}::${tier}`;
+      const existing = grouped.get(key);
+      const accumulated = (existing?.quantity ?? 0) + item.quantity;
+
       if (!Number.isSafeInteger(accumulated)) {
         throw new ArithmeticOverflowError('La cantidad acumulada excede el límite entero seguro.', {
           productId: item.productId,
         });
       }
-      quantityByProduct.set(item.productId, accumulated);
+
+      grouped.set(key, { productId: item.productId, saleTier: tier, quantity: accumulated });
     }
 
-    return Array.from(quantityByProduct.entries(), ([productId, quantity]) => ({
-      productId,
-      quantity,
-    }));
+    return Array.from(grouped.values());
   }
 }

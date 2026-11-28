@@ -1,8 +1,15 @@
-import { PaymentType, SaleWithItems } from '../entities/types';
+import {
+  CustomerPayment,
+  FinancialSummary,
+  PaymentType,
+  SaleTier,
+  SaleWithItems,
+} from '../entities/types';
 
 export interface SaleLineInput {
   readonly productId: string;
   readonly quantity: number;
+  readonly saleTier?: SaleTier;
 }
 
 export interface CreateSaleTransactionInput {
@@ -14,7 +21,9 @@ export interface CreateSaleTransactionInput {
 
 export interface ISaleRepository {
   createSaleAtomic(input: CreateSaleTransactionInput): Promise<SaleWithItems>;
+  paySaleAtomic(saleId: string, notes: string | null): Promise<CustomerPayment>;
   voidSaleAtomic(saleId: string, reason: string | null): Promise<void>;
   listSalesByCustomer(customerId: string): Promise<SaleWithItems[]>;
   listRecentSales(limit?: number): Promise<SaleWithItems[]>;
+  getFinancialSummary(): Promise<FinancialSummary>;
 }

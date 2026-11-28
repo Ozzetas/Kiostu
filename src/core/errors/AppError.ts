@@ -15,9 +15,7 @@ export type ErrorCode =
   | 'EMERGENCY_WIPE_ERROR'
   | 'CRYPTO_OPERATION_ERROR'
   | 'MEDIA_PERMISSION_DENIED'
-  | 'MEDIA_PROCESSING_ERROR'
-  | 'NETWORK_DOWNLOAD_ERROR'
-  | 'NETWORK_TIMEOUT_ERROR';
+  | 'MEDIA_PROCESSING_ERROR';
 
 export abstract class AppError extends Error {
   public readonly code: ErrorCode;
@@ -82,10 +80,7 @@ export class SecurityError extends AppError {
 
 export type MediaErrorCode = Extract<
   ErrorCode,
-  | 'MEDIA_PERMISSION_DENIED'
-  | 'MEDIA_PROCESSING_ERROR'
-  | 'NETWORK_DOWNLOAD_ERROR'
-  | 'NETWORK_TIMEOUT_ERROR'
+  'MEDIA_PERMISSION_DENIED' | 'MEDIA_PROCESSING_ERROR'
 >;
 
 export class MediaError extends AppError {

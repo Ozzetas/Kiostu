@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
 import { Logger } from '../../src/core/logging/Logger';
 import { DEFAULT_SESSION_TIMEOUT_MS, SecuritySnapshot } from '../../src/domain/entities/security';
+import { AgendaPaperBackground } from '../../src/presentation/components/AgendaPaperBackground';
 import { ErrorBanner } from '../../src/presentation/components/ErrorBanner';
 import { useSecuritySession } from '../../src/presentation/components/SecurityGate';
 import { useAppServices } from '../../src/presentation/di/AppServicesProvider';
@@ -166,8 +167,8 @@ export default function SettingsScreen() {
 
   const handleConfirmDevReset = (): void => {
     Alert.alert(
-      'Reiniciar Bóveda (Desarrollo)',
-      'Se eliminarán las credenciales guardadas en el Keychain para volver a mostrar la pantalla inicial "Blindá tu Kiosco".',
+      'Reiniciar Agenda (Desarrollo)',
+      'Se eliminarán las credenciales guardadas en el Keychain para volver a mostrar la tapa inicial de configuración.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -185,252 +186,254 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View>
-          <Text style={styles.kicker}>SEGURIDAD Y SISTEMA</Text>
-          <Text style={styles.title}>Ajustes</Text>
-        </View>
-
-        <ErrorBanner message={errorMessage} />
-
-        {statusMessage !== null && (
-          <View style={styles.successBanner}>
-            <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-            <Text style={styles.successText}>{statusMessage}</Text>
+    <AgendaPaperBackground>
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          <View>
+            <Text style={styles.kicker}>SEGURIDAD · 100% OFFLINE</Text>
+            <Text style={styles.title}>Ajustes</Text>
           </View>
-        )}
 
-        <View style={styles.card}>
-          <Text style={styles.sectionLabel}>SESIÓN ACTIVA</Text>
-          <Pressable
-            style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
-            onPress={lockNow}
-          >
-            <View style={styles.actionIconBox}>
-              <Ionicons name="lock-closed" size={18} color={Colors.primary} />
+          <ErrorBanner message={errorMessage} />
+
+          {statusMessage !== null && (
+            <View style={styles.successBanner}>
+              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+              <Text style={styles.successText}>{statusMessage}</Text>
             </View>
-            <View style={styles.actionTextBlock}>
-              <Text style={styles.actionTitle}>Bloquear Kiosco ahora</Text>
-              <Text style={styles.actionSubtitle}>Exige tu clave principal al instante</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-          </Pressable>
-        </View>
+          )}
 
-        {snapshot !== null && (
-          <>
-            <View style={styles.card}>
-              <Text style={styles.sectionLabel}>POLÍTICA DE ACCESO</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionLabel}>SESIÓN ACTIVA</Text>
+            <Pressable
+              style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+              onPress={lockNow}
+            >
+              <View style={styles.actionIconBox}>
+                <Ionicons name="lock-closed" size={18} color={Colors.primary} />
+              </View>
+              <View style={styles.actionTextBlock}>
+                <Text style={styles.actionTitle}>Cerrar agenda ahora</Text>
+                <Text style={styles.actionSubtitle}>Exige tu clave principal al instante</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+            </Pressable>
+          </View>
 
-              <View style={styles.switchRow}>
-                <View style={styles.actionTextBlock}>
-                  <Text style={styles.actionTitle}>Desbloqueo rápido con Face ID</Text>
-                  <Text style={styles.actionSubtitle}>
-                    Activo dentro de la ventana de inactividad
-                  </Text>
+          {snapshot !== null && (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.sectionLabel}>POLÍTICA DE ACCESO</Text>
+
+                <View style={styles.switchRow}>
+                  <View style={styles.actionTextBlock}>
+                    <Text style={styles.actionTitle}>Apertura rápida con Face ID</Text>
+                    <Text style={styles.actionSubtitle}>
+                      Activo dentro de la ventana de inactividad
+                    </Text>
+                  </View>
+                  <Switch
+                    value={snapshot.policy.biometricEnabled}
+                    disabled={isUpdatingPolicy}
+                    onValueChange={(nextVal) =>
+                      void handleUpdatePolicy(nextVal, snapshot.policy.sessionTimeoutMs)
+                    }
+                    trackColor={{ false: Colors.border, true: Colors.primary }}
+                    thumbColor={Colors.white}
+                  />
                 </View>
-                <Switch
-                  value={snapshot.policy.biometricEnabled}
-                  disabled={isUpdatingPolicy}
-                  onValueChange={(nextVal) =>
-                    void handleUpdatePolicy(nextVal, snapshot.policy.sessionTimeoutMs)
-                  }
-                  trackColor={{ false: Colors.border, true: Colors.primary }}
-                  thumbColor={Colors.white}
-                />
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.actionTitle}>Pedir clave principal tras inactividad</Text>
+                  <View style={styles.chipRow}>
+                    {TIMEOUT_OPTIONS.map((option) => {
+                      const selected = snapshot.policy.sessionTimeoutMs === option.ms;
+                      return (
+                        <Pressable
+                          key={option.ms}
+                          style={[styles.chip, selected && styles.chipSelected]}
+                          disabled={isUpdatingPolicy}
+                          onPress={() =>
+                            void handleUpdatePolicy(snapshot.policy.biometricEnabled, option.ms)
+                          }
+                        >
+                          <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
               </View>
 
-              <View style={styles.fieldGroup}>
-                <Text style={styles.actionTitle}>Pedir clave principal tras inactividad</Text>
-                <View style={styles.chipRow}>
-                  {TIMEOUT_OPTIONS.map((option) => {
-                    const selected = snapshot.policy.sessionTimeoutMs === option.ms;
-                    return (
-                      <Pressable
-                        key={option.ms}
-                        style={[styles.chip, selected && styles.chipSelected]}
-                        disabled={isUpdatingPolicy}
-                        onPress={() =>
-                          void handleUpdatePolicy(snapshot.policy.biometricEnabled, option.ms)
-                        }
-                      >
-                        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.card}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.sectionLabel}>PROTOCOLO DE PRIVACIDAD</Text>
-                <View
-                  style={[
-                    styles.statusChip,
-                    snapshot.hasPanicPassword ? styles.statusChipOn : styles.statusChipOff,
-                  ]}
-                >
-                  <Text
+              <View style={styles.card}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.sectionLabel}>PROTOCOLO DE PRIVACIDAD</Text>
+                  <View
                     style={[
-                      styles.statusChipText,
-                      snapshot.hasPanicPassword
-                        ? styles.statusChipTextOn
-                        : styles.statusChipTextOff,
+                      styles.statusChip,
+                      snapshot.hasPanicPassword ? styles.statusChipOn : styles.statusChipOff,
                     ]}
                   >
-                    {snapshot.hasPanicPassword ? 'ACTIVA' : 'INACTIVA'}
-                  </Text>
+                    <Text
+                      style={[
+                        styles.statusChipText,
+                        snapshot.hasPanicPassword
+                          ? styles.statusChipTextOn
+                          : styles.statusChipTextOff,
+                      ]}
+                    >
+                      {snapshot.hasPanicPassword ? 'ACTIVA' : 'INACTIVA'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
 
-              <Text style={styles.actionSubtitle}>
-                Para definir, cambiar o desactivar la clave de borrado rápido debés confirmar tu
-                contraseña principal actual.
-              </Text>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.inputLabel}>Contraseña principal actual *</Text>
-                <TextInput
-                  style={styles.panicInput}
-                  value={currentPrimaryForPanic}
-                  onChangeText={setCurrentPrimaryForPanic}
-                  placeholder="Ingresá tu clave maestra actual"
-                  placeholderTextColor={Colors.textMuted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.inputLabel}>
-                  {snapshot.hasPanicPassword
-                    ? 'Nueva clave de borrado rápido *'
-                    : 'Clave de borrado rápido *'}
+                <Text style={styles.actionSubtitle}>
+                  Para definir, cambiar o desactivar la clave de borrado rápido debés confirmar tu
+                  contraseña principal actual.
                 </Text>
-                <View style={styles.panicRow}>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.inputLabel}>Contraseña principal actual *</Text>
                   <TextInput
-                    style={styles.panicInputFlex}
-                    value={panicPasswordInput}
-                    onChangeText={setPanicPasswordInput}
-                    placeholder="Mínimo 4 caracteres (distinta a la principal)"
+                    style={styles.panicInput}
+                    value={currentPrimaryForPanic}
+                    onChangeText={setCurrentPrimaryForPanic}
+                    placeholder="Ingresá tu clave maestra actual"
                     placeholderTextColor={Colors.textMuted}
                     secureTextEntry
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
-                  <Pressable
-                    style={styles.panicSaveBtn}
-                    onPress={() => void handleSavePanicPassword()}
-                    disabled={isSavingPanic}
-                  >
-                    {isSavingPanic ? (
-                      <ActivityIndicator color={Colors.white} size="small" />
-                    ) : (
-                      <Text style={styles.panicSaveText}>Guardar</Text>
-                    )}
-                  </Pressable>
                 </View>
-              </View>
 
-              {snapshot.hasPanicPassword && (
-                <Pressable
-                  style={styles.removePanicBtn}
-                  onPress={handleOpenDisablePanicModal}
-                >
-                  <Ionicons name="shield-outline" size={16} color={Colors.danger} />
-                  <Text style={styles.removePanicText}>Desactivar clave secundaria</Text>
-                </Pressable>
-              )}
-            </View>
-          </>
-        )}
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.inputLabel}>
+                    {snapshot.hasPanicPassword
+                      ? 'Nueva clave de borrado rápido *'
+                      : 'Clave de borrado rápido *'}
+                  </Text>
+                  <View style={styles.panicRow}>
+                    <TextInput
+                      style={styles.panicInputFlex}
+                      value={panicPasswordInput}
+                      onChangeText={setPanicPasswordInput}
+                      placeholder="Mínimo 4 caracteres (distinta a la principal)"
+                      placeholderTextColor={Colors.textMuted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <Pressable
+                      style={styles.panicSaveBtn}
+                      onPress={() => void handleSavePanicPassword()}
+                      disabled={isSavingPanic}
+                    >
+                      {isSavingPanic ? (
+                        <ActivityIndicator color={Colors.white} size="small" />
+                      ) : (
+                        <Text style={styles.panicSaveText}>Guardar</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
 
-        {__DEV__ && (
-          <View style={[styles.card, styles.devCard]}>
-            <Text style={styles.devLabel}>HERRAMIENTA DE DESARROLLO</Text>
-            <Pressable
-              style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
-              onPress={handleConfirmDevReset}
-            >
-              <View style={styles.devIconBox}>
-                <Ionicons name="refresh-circle" size={20} color={Colors.danger} />
-              </View>
-              <View style={styles.actionTextBlock}>
-                <Text style={styles.actionTitle}>Volver a "Blindá tu Kiosco"</Text>
-                <Text style={styles.actionSubtitle}>
-                  Limpia el Keychain para probar el alta de claves desde cero
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={Colors.danger} />
-            </Pressable>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Modal de verificación de clave principal antes de quitar la clave de pánico */}
-      <Modal
-        visible={disableModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setDisableModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          style={styles.modalBackdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Confirmar identidad</Text>
-            <Text style={styles.actionSubtitle}>
-              Ingresá tu contraseña principal actual para desactivar la clave de borrado rápido.
-            </Text>
-            <ErrorBanner message={disableModalError} />
-            <TextInput
-              style={styles.panicInput}
-              value={primaryForDisable}
-              onChangeText={setPrimaryForDisable}
-              placeholder="Contraseña principal actual"
-              placeholderTextColor={Colors.textMuted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-            />
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.modalCancelBtn}
-                onPress={() => setDisableModalVisible(false)}
-                disabled={isDisablingPanic}
-              >
-                <Text style={styles.modalCancelText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={styles.modalDangerBtn}
-                onPress={() => void handleConfirmDisablePanic()}
-                disabled={isDisablingPanic}
-              >
-                {isDisablingPanic ? (
-                  <ActivityIndicator color={Colors.white} size="small" />
-                ) : (
-                  <Text style={styles.panicSaveText}>Desactivar</Text>
+                {snapshot.hasPanicPassword && (
+                  <Pressable
+                    style={styles.removePanicBtn}
+                    onPress={handleOpenDisablePanicModal}
+                  >
+                    <Ionicons name="shield-outline" size={16} color={Colors.danger} />
+                    <Text style={styles.removePanicText}>Desactivar clave secundaria</Text>
+                  </Pressable>
                 )}
+              </View>
+            </>
+          )}
+
+          {__DEV__ && (
+            <View style={[styles.card, styles.devCard]}>
+              <Text style={styles.devLabel}>HERRAMIENTA DE DESARROLLO</Text>
+              <Pressable
+                style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+                onPress={handleConfirmDevReset}
+              >
+                <View style={styles.devIconBox}>
+                  <Ionicons name="refresh-circle" size={20} color={Colors.danger} />
+                </View>
+                <View style={styles.actionTextBlock}>
+                  <Text style={styles.actionTitle}>Reiniciar configuración inicial</Text>
+                  <Text style={styles.actionSubtitle}>
+                    Limpia el Keychain para probar el alta de claves desde cero
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.danger} />
               </Pressable>
             </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-    </SafeAreaView>
+          )}
+        </ScrollView>
+
+        {/* Modal de verificación de clave principal antes de quitar la clave de pánico */}
+        <Modal
+          visible={disableModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDisableModalVisible(false)}
+        >
+          <KeyboardAvoidingView
+            style={styles.modalBackdrop}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Confirmar identidad</Text>
+              <Text style={styles.actionSubtitle}>
+                Ingresá tu contraseña principal actual para desactivar la clave de borrado rápido.
+              </Text>
+              <ErrorBanner message={disableModalError} />
+              <TextInput
+                style={styles.panicInput}
+                value={primaryForDisable}
+                onChangeText={setPrimaryForDisable}
+                placeholder="Contraseña principal actual"
+                placeholderTextColor={Colors.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={styles.modalCancelBtn}
+                  onPress={() => setDisableModalVisible(false)}
+                  disabled={isDisablingPanic}
+                >
+                  <Text style={styles.modalCancelText}>Cancelar</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.modalDangerBtn}
+                  onPress={() => void handleConfirmDisablePanic()}
+                  disabled={isDisablingPanic}
+                >
+                  {isDisablingPanic ? (
+                    <ActivityIndicator color={Colors.white} size="small" />
+                  ) : (
+                    <Text style={styles.panicSaveText}>Desactivar</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      </SafeAreaView>
+    </AgendaPaperBackground>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   container: {
     padding: Spacing.lg,
@@ -652,7 +655,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 9, 11, 0.55)',
+    backgroundColor: 'rgba(7, 11, 10, 0.58)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.xl,

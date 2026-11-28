@@ -1,23 +1,23 @@
 import * as Crypto from 'expo-crypto';
 import {
-    EntityNotFoundError,
-    InsufficientStockError,
-    ValidationError,
+  EntityNotFoundError,
+  InsufficientStockError,
+  ValidationError,
 } from '../../core/errors/AppError';
 import { Logger } from '../../core/logging/Logger';
 import {
-    Category,
-    Product,
-    StockMovement,
-    StockMovementType,
-    UnitType,
+  Category,
+  Product,
+  StockMovement,
+  StockMovementType,
+  UnitType,
 } from '../../domain/entities/types';
 import {
-    AdjustStockPersistenceInput,
-    CreateCategoryInput,
-    CreateProductInput,
-    IProductRepository,
-    UpdateProductInput,
+  AdjustStockPersistenceInput,
+  CreateCategoryInput,
+  CreateProductInput,
+  IProductRepository,
+  UpdateProductInput,
 } from '../../domain/repositories/IProductRepository';
 import { DatabaseClient } from '../database/DatabaseClient';
 import { mapSqliteError } from '../database/sqliteErrorMapper';
@@ -34,6 +34,8 @@ interface ProductRow {
   readonly category_id: string | null;
   readonly name: string;
   readonly unit_type: UnitType;
+  readonly cost_price_cents: number;
+  readonly wholesale_price_cents: number;
   readonly unit_price_cents: number;
   readonly price_base_qty: number;
   readonly stock_qty: number;
@@ -77,15 +79,15 @@ export class SqliteProductRepository implements IProductRepository {
     const id = Crypto.randomUUID();
     const now = new Date().toISOString();
     const sortOrder = input.sortOrder ?? 0;
+    const cleanName = input.name.trim();
 
     try {
       const db = await this.databaseClient.getConnection();
       await db.runAsync(
         'INSERT INTO categories (id, name, sort_order, created_at) VALUES (?, ?, ?, ?);',
-        [id, input.name.trim(), sortOrder, now]
+        [id, cleanName, sortOrder, now]
       );
-
-      return { id, name: input.name.trim(), sortOrder, createdAt: now };
+      return { id, name: cleanName, sortOrder, createdAt: now };
     } catch (error: unknown) {
       const mapped = mapSqliteError(error, 'DB_QUERY_ERROR', 'Error al crear categoría', {
         name: input.name,
@@ -123,7 +125,6 @@ export class SqliteProductRepository implements IProductRepository {
           : await db.getAllAsync<ProductRow>(
               'SELECT * FROM products WHERE is_active = 1 ORDER BY name ASC;'
             );
-
       return rows.map((row) => this.mapProduct(row));
     } catch (error: unknown) {
       const mapped = mapSqliteError(error, 'DB_QUERY_ERROR', 'Error al listar productos activos', {
@@ -159,21 +160,27 @@ export class SqliteProductRepository implements IProductRepository {
       throw new ValidationError('El nombre del producto no puede estar vacío.');
     }
 
+    const costPriceCents = input.costPriceCents ?? 0;
+    const wholesalePriceCents = input.wholesalePriceCents ?? input.unitPriceCents;
+
     try {
       const db = await this.databaseClient.getConnection();
+
       // Inserto producto y su movimiento de stock inicial en una misma transacción para mantener trazabilidad contable.
       await db.withExclusiveTransactionAsync(async (txn) => {
         await txn.runAsync(
           `INSERT INTO products (
-            id, category_id, name, unit_type, unit_price_cents,
-            price_base_qty, stock_qty, min_stock_alert, image_uri,
+            id, category_id, name, unit_type, cost_price_cents, wholesale_price_cents,
+            unit_price_cents, price_base_qty, stock_qty, min_stock_alert, image_uri,
             is_active, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);`,
           [
             id,
             input.categoryId,
             cleanName,
             input.unitType,
+            costPriceCents,
+            wholesalePriceCents,
             input.unitPriceCents,
             input.priceBaseQty,
             input.initialStockQty,
@@ -199,6 +206,8 @@ export class SqliteProductRepository implements IProductRepository {
         categoryId: input.categoryId,
         name: cleanName,
         unitType: input.unitType,
+        costPriceCents,
+        wholesalePriceCents,
         unitPriceCents: input.unitPriceCents,
         priceBaseQty: input.priceBaseQty,
         stockQty: input.initialStockQty,
@@ -233,8 +242,11 @@ export class SqliteProductRepository implements IProductRepository {
         }
 
         const now = new Date().toISOString();
-        const nextCategoryId = input.categoryId !== undefined ? input.categoryId : current.category_id;
+        const nextCategoryId =
+          input.categoryId !== undefined ? input.categoryId : current.category_id;
         const nextName = input.name !== undefined ? input.name.trim() : current.name;
+        const nextCostPrice = input.costPriceCents ?? current.cost_price_cents;
+        const nextWholesalePrice = input.wholesalePriceCents ?? current.wholesale_price_cents;
         const nextUnitPrice = input.unitPriceCents ?? current.unit_price_cents;
         const nextPriceBase = input.priceBaseQty ?? current.price_base_qty;
         const nextMinAlert = input.minStockAlert ?? current.min_stock_alert;
@@ -246,12 +258,15 @@ export class SqliteProductRepository implements IProductRepository {
 
         await txn.runAsync(
           `UPDATE products
-           SET category_id = ?, name = ?, unit_price_cents = ?, price_base_qty = ?,
-               min_stock_alert = ?, image_uri = ?, updated_at = ?
+           SET category_id = ?, name = ?, cost_price_cents = ?, wholesale_price_cents = ?,
+               unit_price_cents = ?, price_base_qty = ?, min_stock_alert = ?, image_uri = ?,
+               updated_at = ?
            WHERE id = ?;`,
           [
             nextCategoryId,
             nextName,
+            nextCostPrice,
+            nextWholesalePrice,
             nextUnitPrice,
             nextPriceBase,
             nextMinAlert,
@@ -266,6 +281,8 @@ export class SqliteProductRepository implements IProductRepository {
           categoryId: nextCategoryId,
           name: nextName,
           unitType: current.unit_type,
+          costPriceCents: nextCostPrice,
+          wholesalePriceCents: nextWholesalePrice,
           unitPriceCents: nextUnitPrice,
           priceBaseQty: nextPriceBase,
           stockQty: current.stock_qty,
@@ -295,6 +312,7 @@ export class SqliteProductRepository implements IProductRepository {
     try {
       const db = await this.databaseClient.getConnection();
       const now = new Date().toISOString();
+
       // Uso borrado lógico para no romper referencias históricas en sale_items y stock_movements.
       const result = await db.runAsync(
         'UPDATE products SET is_active = 0, updated_at = ? WHERE id = ? AND is_active = 1;',
@@ -338,6 +356,7 @@ export class SqliteProductRepository implements IProductRepository {
         }
 
         const now = new Date().toISOString();
+
         await txn.runAsync('UPDATE products SET stock_qty = ?, updated_at = ? WHERE id = ?;', [
           nextStockQty,
           now,
@@ -428,6 +447,8 @@ export class SqliteProductRepository implements IProductRepository {
       categoryId: row.category_id,
       name: row.name,
       unitType: row.unit_type,
+      costPriceCents: row.cost_price_cents,
+      wholesalePriceCents: row.wholesale_price_cents,
       unitPriceCents: row.unit_price_cents,
       priceBaseQty: row.price_base_qty,
       stockQty: row.stock_qty,

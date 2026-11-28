@@ -1,46 +1,53 @@
 import { ViewStyle } from 'react-native';
 
 export const Colors = {
-  // Superficies modo operativo (POS luminoso)
-  background: '#F4F5F7',
+  // Superficies de hoja de agenda (interior luminoso con renglones)
+  background: '#FAF8F2',
+  paperBackground: '#FAF8F2',
+  paperLine: '#DCE4EE',
+  paperMarginLine: '#EBB9B9',
   surface: '#FFFFFF',
-  surfaceElevated: '#EEF0F4',
-  border: '#E4E4E7',
-  borderSubtle: '#F1F5F9',
+  surfaceElevated: '#F1EFE7',
+  border: '#DDD8CB',
+  borderSubtle: '#ECE8DD',
 
-  // Superficies modo bóveda (Seguridad / Lock Screen / Privacy Overlay)
-  vaultBackground: '#09090B',
-  vaultSurface: '#18181B',
-  vaultSurfaceElevated: '#27272A',
-  vaultBorder: '#27272A',
-  vaultBorderHighlight: '#3F3F46',
-  vaultTextPrimary: '#FAFAFA',
-  vaultTextSecondary: '#A1A1AA',
-  vaultTextMuted: '#71717A',
+  // Superficies de tapa cerrada (Agenda Futurista Carbono + LED Esmeralda + Oro)
+  vaultBackground: '#070B0A',
+  vaultSurface: '#101715',
+  vaultSurfaceElevated: '#1A2421',
+  vaultBorder: '#1E2D28',
+  vaultBorderHighlight: '#2C423B',
+  vaultTextPrimary: '#F8FAFC',
+  vaultTextSecondary: '#9FB3AC',
+  vaultTextMuted: '#637871',
+  spineDark: '#0C1210',
+  spineMetal: '#33453F',
 
-  // Tipografía operativa
-  textPrimary: '#09090B',
-  textSecondary: '#52525B',
-  textMuted: '#A1A1AA',
+  // Tipografía operativa (tinta oscura sobre papel)
+  textPrimary: '#111816',
+  textSecondary: '#4B5954',
+  textMuted: '#899691',
 
-  // Acentos de marca 2026 (Índigo Eléctrico + Esmeralda)
-  primary: '#4F46E5',
-  primaryLight: '#6366F1',
-  primaryPressed: '#4338CA',
-  primarySoft: '#EEF2FF',
-  primaryGlow: 'rgba(99, 102, 241, 0.16)',
+  // Acentos de marca: Esmeralda Ledger + Dorado USD$
+  primary: '#059669',
+  primaryLight: '#10B981',
+  primaryPressed: '#047857',
+  primarySoft: '#ECFDF5',
+  primaryGlow: 'rgba(16, 185, 129, 0.18)',
+  gold: '#D4AF37',
+  goldSoft: 'rgba(212, 175, 55, 0.16)',
 
   // Estados semánticos
-  danger: '#EF4444',
+  danger: '#DC2626',
   dangerSoft: '#FEF2F2',
   dangerVaultBg: 'rgba(239, 68, 68, 0.14)',
   dangerVaultBorder: 'rgba(239, 68, 68, 0.45)',
-  success: '#10B981',
+  success: '#059669',
   successSoft: '#ECFDF5',
-  warning: '#F59E0B',
+  warning: '#D97706',
   warningSoft: '#FFFBEB',
 
-  overlayDark: '#09090B',
+  overlayDark: '#070B0A',
   white: '#FFFFFF',
 } as const;
 
@@ -72,24 +79,24 @@ export const Typography = {
 
 export const Shadows: Record<'card' | 'floating' | 'glowPrimary', ViewStyle> = {
   card: {
-    shadowColor: '#09090B',
-    shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#070B0A',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
-    shadowRadius: 16,
-    elevation: 3,
+    shadowRadius: 12,
+    elevation: 2,
   },
   floating: {
-    shadowColor: '#09090B',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.14,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.28,
     shadowRadius: 24,
-    elevation: 8,
+    elevation: 10,
   },
   glowPrimary: {
-    shadowColor: '#4F46E5',
+    shadowColor: '#10B981',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
+    shadowOpacity: 0.34,
+    shadowRadius: 16,
     elevation: 6,
   },
 };

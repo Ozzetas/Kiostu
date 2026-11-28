@@ -3,10 +3,10 @@ import { EntityNotFoundError, ValidationError } from '../../core/errors/AppError
 import { Logger } from '../../core/logging/Logger';
 import { Customer, CustomerBalance, CustomerPayment } from '../../domain/entities/types';
 import {
-    CreateCustomerInput,
-    ICustomerRepository,
-    RecordPaymentPersistenceInput,
-    UpdateCustomerInput,
+  CreateCustomerInput,
+  ICustomerRepository,
+  RecordPaymentPersistenceInput,
+  UpdateCustomerInput,
 } from '../../domain/repositories/ICustomerRepository';
 import { DatabaseClient } from '../database/DatabaseClient';
 import { mapSqliteError } from '../database/sqliteErrorMapper';
@@ -32,6 +32,7 @@ interface CustomerBalanceRow {
 interface CustomerPaymentRow {
   readonly id: string;
   readonly customer_id: string;
+  readonly reference_sale_id: string | null;
   readonly amount_cents: number;
   readonly notes: string | null;
   readonly created_at: string;
@@ -62,7 +63,6 @@ export class SqliteCustomerRepository implements ICustomerRepository {
       const sql = onlyWithDebt
         ? 'SELECT * FROM v_customer_balances WHERE current_debt_cents > 0 ORDER BY current_debt_cents DESC, full_name ASC;'
         : 'SELECT * FROM v_customer_balances ORDER BY current_debt_cents DESC, full_name ASC;';
-
       const rows = await db.getAllAsync<CustomerBalanceRow>(sql);
       return rows.map((row) => this.mapBalance(row));
     } catch (error: unknown) {
@@ -123,7 +123,6 @@ export class SqliteCustomerRepository implements ICustomerRepository {
          VALUES (?, ?, ?, ?, 1, ?, ?);`,
         [id, cleanName, cleanPhone, cleanNotes, now, now]
       );
-
       return {
         id,
         fullName: cleanName,
@@ -152,7 +151,6 @@ export class SqliteCustomerRepository implements ICustomerRepository {
           'SELECT * FROM customers WHERE id = ? AND is_active = 1;',
           [customerId]
         );
-
         if (!current) {
           throw new EntityNotFoundError('Customer', customerId);
         }
@@ -205,7 +203,6 @@ export class SqliteCustomerRepository implements ICustomerRepository {
           'SELECT * FROM v_customer_balances WHERE customer_id = ?;',
           [customerId]
         );
-
         if (!balance) {
           throw new EntityNotFoundError('Customer', customerId);
         }
@@ -242,7 +239,6 @@ export class SqliteCustomerRepository implements ICustomerRepository {
           'SELECT * FROM v_customer_balances WHERE customer_id = ?;',
           [input.customerId]
         );
-
         if (!balance) {
           throw new EntityNotFoundError('Customer', input.customerId);
         }
@@ -266,14 +262,15 @@ export class SqliteCustomerRepository implements ICustomerRepository {
         const now = new Date().toISOString();
 
         await txn.runAsync(
-          `INSERT INTO customer_payments (id, customer_id, amount_cents, notes, created_at)
-           VALUES (?, ?, ?, ?, ?);`,
+          `INSERT INTO customer_payments (id, customer_id, reference_sale_id, amount_cents, notes, created_at)
+           VALUES (?, ?, NULL, ?, ?, ?);`,
           [id, input.customerId, input.amountCents, input.notes, now]
         );
 
         payment = {
           id,
           customerId: input.customerId,
+          referenceSaleId: null,
           amountCents: input.amountCents,
           notes: input.notes,
           createdAt: now,
@@ -299,7 +296,7 @@ export class SqliteCustomerRepository implements ICustomerRepository {
     try {
       const db = await this.databaseClient.getConnection();
       const rows = await db.getAllAsync<CustomerPaymentRow>(
-        `SELECT id, customer_id, amount_cents, notes, created_at
+        `SELECT id, customer_id, reference_sale_id, amount_cents, notes, created_at
          FROM customer_payments
          WHERE customer_id = ?
          ORDER BY created_at DESC;`,
@@ -309,6 +306,7 @@ export class SqliteCustomerRepository implements ICustomerRepository {
       return rows.map((row) => ({
         id: row.id,
         customerId: row.customer_id,
+        referenceSaleId: row.reference_sale_id,
         amountCents: row.amount_cents,
         notes: row.notes,
         createdAt: row.created_at,

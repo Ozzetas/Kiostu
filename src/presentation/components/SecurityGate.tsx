@@ -87,16 +87,60 @@ function mapAuthFailureToMessage(reason: FailedAuthReason): string {
     case 'INVALID_PASSWORD':
       return 'Contraseña incorrecta.';
     case 'PASSWORD_REQUIRED_BY_POLICY':
-      return 'Expiró la ventana de sesión. Ingresá tu contraseña principal.';
+      return 'Expiró la ventana de sesión. Ingresá tu clave principal para abrir la agenda.';
     case 'BIOMETRIC_CANCELLED':
-      return 'Usá tu contraseña para continuar.';
+      return 'Usá tu clave para abrir la agenda.';
     case 'BIOMETRIC_UNAVAILABLE':
-      return 'Face ID no disponible en este momento. Ingresá tu contraseña.';
+      return 'Face ID no disponible en este momento. Ingresá tu clave.';
     case 'BIOMETRIC_FAILED':
-      return 'No se pudo reconocer tu rostro. Reintentá o ingresá tu contraseña.';
+      return 'No se pudo reconocer tu rostro. Reintentá o ingresá tu clave.';
     case 'NOT_CONFIGURED':
-      return 'Debés configurar una contraseña principal primero.';
+      return 'Debés configurar una clave principal primero.';
   }
+}
+
+function AgendaBookFrame({ children }: { readonly children: React.ReactNode }) {
+  return (
+    <View style={styles.bookOuter}>
+      {/* Lomo metálico izquierdo con bisagras LED inspirado en una agenda cerrada */}
+      <View style={styles.bookSpine}>
+        <View style={styles.spineHinge}>
+          <View style={styles.spineLed} />
+        </View>
+        <View style={styles.spineGroove} />
+        <View style={styles.spineHinge}>
+          <View style={styles.spineLed} />
+        </View>
+        <View style={styles.spineGroove} />
+        <View style={styles.spineHinge}>
+          <View style={styles.spineLed} />
+        </View>
+      </View>
+
+      {/* Tapa frontal de la agenda */}
+      <View style={styles.bookCover}>
+        <View style={styles.coverTopStrip}>
+          <Text style={styles.coverMicroBrand}>SMART LEDGER</Text>
+          <View style={styles.offlineBadge}>
+            <View style={styles.liveDot} />
+            <Text style={styles.offlineBadgeText}>100% OFFLINE</Text>
+          </View>
+        </View>
+
+        {children}
+
+        <View style={styles.coverFooter}>
+          <View style={styles.circuitLine} />
+          <Text style={styles.coverFooterText}>FINANZAS & CAPITAL · SOLO EN ESTE DISPOSITIVO</Text>
+        </View>
+      </View>
+
+      {/* Pestaña lateral derecha simulando el cierre de la agenda */}
+      <View style={styles.bookClasp}>
+        <View style={styles.claspLed} />
+      </View>
+    </View>
+  );
 }
 
 interface SecurityGateProps {
@@ -155,7 +199,7 @@ export function SecurityGate({ children }: SecurityGateProps) {
     } catch (error: unknown) {
       const normalized = error instanceof Error ? error : new Error(String(error));
       logger.error('Fallo inesperado durante el desbloqueo biométrico', normalized);
-      setErrorMessage('Error al verificar biometría. Ingresá tu contraseña.');
+      setErrorMessage('Error al verificar biometría. Ingresá tu clave.');
     } finally {
       isBiometricPromptActiveRef.current = false;
       setIsBusy(false);
@@ -251,8 +295,8 @@ export function SecurityGate({ children }: SecurityGateProps) {
     }
 
     Alert.alert(
-      'Reiniciar Bóveda (DEV)',
-      'Se eliminarán las contraseñas del Keychain para volver a configurar "Blindá tu Kiosco". Los datos de SQLite se conservan.',
+      'Reiniciar Agenda (DEV)',
+      'Se eliminarán las contraseñas del Keychain para volver a configurar la tapa inicial. Los datos de SQLite se conservan.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -393,23 +437,22 @@ export function SecurityGate({ children }: SecurityGateProps) {
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
-                  <View style={styles.headerBlock}>
-                    <View style={styles.badgePill}>
-                      <View style={styles.liveDot} />
-                      <Text style={styles.badgeText}>100% LOCAL · SIN NUBE</Text>
+                  <AgendaBookFrame>
+                    <View style={styles.coverHeader}>
+                      <Text style={styles.agendaTitle}>AGENDA</Text>
+                      <View style={styles.usdShield}>
+                        <Text style={styles.usdShieldText}>USD$</Text>
+                      </View>
+                      <Text style={styles.subtitle}>
+                        Sellá tu agenda local. Tus productos y cuentas viven exclusivamente en este
+                        teléfono.
+                      </Text>
                     </View>
-                    <Text style={styles.heroTitle}>Blindá tu Kiosco</Text>
-                    <Text style={styles.subtitle}>
-                      Creá tu clave maestra local. Tu inventario y cuentas quedan cifrados en este
-                      iPhone.
-                    </Text>
-                  </View>
 
-                  <View style={styles.vaultCard}>
                     <ErrorBanner message={errorMessage} variant="dark" />
 
                     <View style={styles.sectionHeaderRow}>
-                      <Text style={styles.kicker}>ACCESO PRINCIPAL</Text>
+                      <Text style={styles.kicker}>CERRADURA PRINCIPAL</Text>
                       <Pressable
                         onPress={() => setShowSetupPasswords((prev) => !prev)}
                         hitSlop={10}
@@ -458,10 +501,9 @@ export function SecurityGate({ children }: SecurityGateProps) {
 
                     <View style={styles.fieldGroup}>
                       <Text style={styles.kicker}>PROTOCOLO DE PRIVACIDAD</Text>
-                      <Text style={styles.label}>Clave de restablecimiento rápido (opcional)</Text>
+                      <Text style={styles.label}>Clave de borrado rápido (opcional)</Text>
                       <Text style={styles.helperText}>
-                        Debe ser distinta a la principal. Al ingresarla, limpia todos los registros
-                        en el acto sin alertas.
+                        Distinta a la principal. Al ingresarla, limpia todas las hojas en silencio.
                       </Text>
                       <TextInput
                         style={styles.vaultInput}
@@ -479,10 +521,8 @@ export function SecurityGate({ children }: SecurityGateProps) {
 
                     <View style={styles.switchRow}>
                       <View style={styles.switchTextBlock}>
-                        <Text style={styles.label}>Desbloqueo ágil con Face ID</Text>
-                        <Text style={styles.helperText}>
-                          Disponible dentro de tu ventana de sesión
-                        </Text>
+                        <Text style={styles.label}>Apertura ágil con Face ID</Text>
+                        <Text style={styles.helperText}>Dentro de tu ventana de sesión</Text>
                       </View>
                       <Switch
                         value={setupBiometricEnabled}
@@ -496,7 +536,7 @@ export function SecurityGate({ children }: SecurityGateProps) {
                     </View>
 
                     <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Exigir clave maestra tras inactividad</Text>
+                      <Text style={styles.label}>Pedir clave tras inactividad</Text>
                       <View style={styles.chipRow}>
                         {TIMEOUT_OPTIONS.map((option) => {
                           const selected = setupTimeoutMs === option.ms;
@@ -527,12 +567,12 @@ export function SecurityGate({ children }: SecurityGateProps) {
                         <ActivityIndicator color={Colors.white} />
                       ) : (
                         <>
-                          <Text style={styles.primaryButtonText}>Activar Bóveda</Text>
-                          <Ionicons name="arrow-forward" size={18} color={Colors.white} />
+                          <Text style={styles.primaryButtonText}>Sellar y abrir agenda</Text>
+                          <Ionicons name="book-outline" size={18} color={Colors.white} />
                         </>
                       )}
                     </Pressable>
-                  </View>
+                  </AgendaBookFrame>
                 </ScrollView>
               </KeyboardAvoidingView>
             </SafeAreaView>
@@ -551,29 +591,25 @@ export function SecurityGate({ children }: SecurityGateProps) {
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
-                  <View style={styles.headerBlock}>
-                    <View style={styles.emblemOuter}>
-                      <View style={styles.emblemInner}>
-                        <Ionicons
-                          name={canUseBiometrics ? 'scan-outline' : 'lock-closed'}
-                          size={30}
-                          color={Colors.primaryLight}
-                        />
+                  <AgendaBookFrame>
+                    <View style={styles.coverHeader}>
+                      <Text style={styles.agendaTitle}>AGENDA</Text>
+                      <View style={styles.emblemOuter}>
+                        <View style={styles.emblemInner}>
+                          <Text style={styles.emblemUsdText}>USD$</Text>
+                        </View>
                       </View>
+                      <Text style={styles.subtitle}>
+                        {canUseBiometrics
+                          ? 'Usá Face ID o tu clave para abrir las hojas.'
+                          : 'Agenda cerrada. Ingresá tu clave para abrirla.'}
+                      </Text>
                     </View>
-                    <Text style={styles.heroTitle}>Kiosco</Text>
-                    <Text style={styles.subtitle}>
-                      {canUseBiometrics
-                        ? 'Verificá tu identidad con Face ID o ingresá tu clave.'
-                        : 'Sesión bloqueada. Ingresá tu clave principal para continuar.'}
-                    </Text>
-                  </View>
 
-                  <View style={styles.vaultCard}>
                     <ErrorBanner message={errorMessage} variant="dark" />
 
                     <View style={styles.fieldGroup}>
-                      <Text style={styles.kicker}>CREDENCIAL DE ACCESO</Text>
+                      <Text style={styles.kicker}>CLAVE DE APERTURA</Text>
                       <View style={styles.passwordInputWrapper}>
                         <TextInput
                           style={styles.passwordInputField}
@@ -613,8 +649,8 @@ export function SecurityGate({ children }: SecurityGateProps) {
                         <ActivityIndicator color={Colors.white} />
                       ) : (
                         <>
-                          <Text style={styles.primaryButtonText}>Desbloquear</Text>
-                          <Ionicons name="lock-open-outline" size={18} color={Colors.white} />
+                          <Text style={styles.primaryButtonText}>Abrir agenda</Text>
+                          <Ionicons name="book-outline" size={18} color={Colors.white} />
                         </>
                       )}
                     </Pressable>
@@ -629,7 +665,7 @@ export function SecurityGate({ children }: SecurityGateProps) {
                         disabled={isBusy}
                       >
                         <Ionicons name="scan-outline" size={20} color={Colors.primaryLight} />
-                        <Text style={styles.biometricButtonText}>Desbloquear con Face ID</Text>
+                        <Text style={styles.biometricButtonText}>Abrir con Face ID</Text>
                       </Pressable>
                     )}
 
@@ -645,11 +681,11 @@ export function SecurityGate({ children }: SecurityGateProps) {
                       >
                         <Ionicons name="refresh-circle-outline" size={18} color="#FCA5A5" />
                         <Text style={styles.devResetButtonText}>
-                          Reiniciar bóveda (Solo DEV)
+                          Reiniciar claves (Solo DEV)
                         </Text>
                       </Pressable>
                     )}
-                  </View>
+                  </AgendaBookFrame>
                 </ScrollView>
               </KeyboardAvoidingView>
             </SafeAreaView>
@@ -682,90 +718,182 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.lg,
     justifyContent: 'center',
-    gap: Spacing.xl,
   },
   lockScrollContent: {
     flexGrow: 1,
-    paddingHorizontal: Spacing.xl,
+    paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.xl,
     justifyContent: 'center',
-    gap: Spacing.xl,
   },
-  headerBlock: {
+  bookOuter: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    position: 'relative',
+    ...Shadows.floating,
+  },
+  bookSpine: {
+    width: 24,
+    backgroundColor: Colors.spineDark,
+    borderTopLeftRadius: Radius.xl,
+    borderBottomLeftRadius: Radius.xl,
+    borderWidth: 1,
+    borderRightWidth: 0,
+    borderColor: Colors.spineMetal,
+    justifyContent: 'space-evenly',
     alignItems: 'center',
-    gap: Spacing.sm,
+    paddingVertical: Spacing.xl,
   },
-  badgePill: {
+  spineHinge: {
+    width: 14,
+    height: 36,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.vaultSurfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.spineMetal,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spineLed: {
+    width: 4,
+    height: 18,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primaryLight,
+  },
+  spineGroove: {
+    width: 12,
+    height: 1,
+    backgroundColor: Colors.vaultBorderHighlight,
+  },
+  bookCover: {
+    flex: 1,
+    backgroundColor: Colors.vaultSurface,
+    borderTopRightRadius: Radius.xl,
+    borderBottomRightRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.vaultBorderHighlight,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+  },
+  bookClasp: {
+    position: 'absolute',
+    right: -4,
+    top: '44%',
+    width: 10,
+    height: 48,
+    borderTopRightRadius: Radius.sm,
+    borderBottomRightRadius: Radius.sm,
+    backgroundColor: Colors.vaultSurfaceElevated,
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderColor: Colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  claspLed: {
+    width: 3,
+    height: 20,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.gold,
+  },
+  coverTopStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    backgroundColor: Colors.vaultSurface,
+    justifyContent: 'space-between',
+    paddingBottom: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.vaultBorder,
+  },
+  coverMicroBrand: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: Colors.gold,
+    letterSpacing: 1.8,
+  },
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.vaultBackground,
     borderWidth: 1,
     borderColor: Colors.vaultBorderHighlight,
     borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    marginBottom: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
   },
   liveDot: {
-    width: 7,
-    height: 7,
+    width: 6,
+    height: 6,
     borderRadius: Radius.full,
-    backgroundColor: Colors.success,
+    backgroundColor: Colors.primaryLight,
   },
-  badgeText: {
+  offlineBadgeText: {
     color: Colors.vaultTextSecondary,
-    fontSize: Typography.micro,
+    fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 1.1,
+    letterSpacing: 0.9,
+  },
+  coverHeader: {
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
+  agendaTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: Colors.vaultTextPrimary,
+    letterSpacing: 5,
+    textAlign: 'center',
+  },
+  usdShield: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.gold,
+  },
+  usdShieldText: {
+    color: Colors.gold,
+    fontSize: Typography.body,
+    fontWeight: '900',
+    letterSpacing: 1.2,
   },
   emblemOuter: {
-    width: 80,
-    height: 80,
+    width: 92,
+    height: 92,
     borderRadius: Radius.xl,
     backgroundColor: Colors.primaryGlow,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.35)',
-    marginBottom: Spacing.xs,
+    borderColor: Colors.primaryLight,
+    marginVertical: Spacing.xs,
     ...Shadows.glowPrimary,
   },
   emblemInner: {
-    width: 58,
-    height: 58,
+    width: 70,
+    height: 70,
     borderRadius: Radius.lg,
-    backgroundColor: Colors.vaultSurface,
+    backgroundColor: Colors.vaultBackground,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.vaultBorderHighlight,
+    borderWidth: 1.5,
+    borderColor: Colors.gold,
   },
-  heroTitle: {
-    fontSize: Typography.hero,
-    fontWeight: '800',
-    color: Colors.vaultTextPrimary,
-    letterSpacing: -0.6,
-    textAlign: 'center',
+  emblemUsdText: {
+    fontSize: Typography.subtitle,
+    fontWeight: '900',
+    color: Colors.gold,
+    letterSpacing: 0.8,
   },
   subtitle: {
-    fontSize: Typography.body,
+    fontSize: Typography.caption,
     color: Colors.vaultTextSecondary,
     textAlign: 'center',
-    lineHeight: 22,
-    maxWidth: 320,
-  },
-  vaultCard: {
-    backgroundColor: Colors.vaultSurface,
-    borderRadius: Radius.xl,
-    padding: Spacing.xl,
-    gap: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.vaultBorder,
-    ...Shadows.floating,
+    lineHeight: 19,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -805,8 +933,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.vaultBorderHighlight,
     borderRadius: Radius.md,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 14,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 13,
     fontSize: Typography.body,
     color: Colors.vaultTextPrimary,
     backgroundColor: Colors.vaultBackground,
@@ -818,12 +946,12 @@ const styles = StyleSheet.create({
     borderColor: Colors.vaultBorderHighlight,
     borderRadius: Radius.md,
     backgroundColor: Colors.vaultBackground,
-    paddingLeft: Spacing.lg,
+    paddingLeft: Spacing.md,
     paddingRight: Spacing.sm,
   },
   passwordInputField: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 13,
     fontSize: Typography.body,
     color: Colors.vaultTextPrimary,
   },
@@ -931,5 +1059,21 @@ const styles = StyleSheet.create({
     color: '#FCA5A5',
     fontSize: Typography.caption,
     fontWeight: '700',
+  },
+  coverFooter: {
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
+    alignItems: 'center',
+  },
+  circuitLine: {
+    width: '100%',
+    height: 1,
+    backgroundColor: Colors.vaultBorder,
+  },
+  coverFooterText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.vaultTextMuted,
+    letterSpacing: 1.2,
   },
 });

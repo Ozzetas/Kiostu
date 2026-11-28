@@ -17,14 +17,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
 import { Logger } from '../../src/core/logging/Logger';
-import { formatCentsToARS } from '../../src/core/utils/money';
+import { formatCentsToUSD } from '../../src/core/utils/money';
 import { formatStockQty } from '../../src/core/utils/units';
 import { PaymentType, Product, SaleWithItems } from '../../src/domain/entities/types';
+import { AgendaPaperBackground } from '../../src/presentation/components/AgendaPaperBackground';
 import { ErrorBanner } from '../../src/presentation/components/ErrorBanner';
 import { ProductTile } from '../../src/presentation/components/ProductTile';
 import { useSecuritySession } from '../../src/presentation/components/SecurityGate';
 import { useAppServices } from '../../src/presentation/di/AppServicesProvider';
 import { useCatalog } from '../../src/presentation/hooks/useCatalog';
+import { useFinancialSummary } from '../../src/presentation/hooks/useFinancialSummary';
 import { Colors, Radius, Shadows, Spacing, Typography } from '../../src/presentation/theme/tokens';
 
 const logger = new Logger('CatalogScreen');
@@ -67,7 +69,10 @@ export default function CatalogScreen() {
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [isSavingCategory, setIsSavingCategory] = useState(false);
 
-  // Modal de historial general de ventas (permite anular contado, fiado o mixto y devolver stock)
+  // Modal de balance y rentabilidad detallada
+  const [profitModalVisible, setProfitModalVisible] = useState(false);
+
+  // Modal de historial general de ventas
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [recentSales, setRecentSales] = useState<readonly SaleWithItems[]>([]);
   const [customerNamesById, setCustomerNamesById] = useState<ReadonlyMap<string, string>>(
@@ -77,6 +82,12 @@ export default function CatalogScreen() {
   const [historyError, setHistoryError] = useState<string | null>(null);
 
   const { categories, products, isLoading, errorMessage, refresh } = useCatalog(selectedCategoryId);
+  const {
+    summary,
+    isLoading: isLoadingSummary,
+    errorMessage: summaryError,
+    refresh: refreshSummary,
+  } = useFinancialSummary();
 
   const filteredProducts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -90,6 +101,18 @@ export default function CatalogScreen() {
     () => products.filter((item) => item.stockQty <= item.minStockAlert).length,
     [products]
   );
+
+  const globalMarginPct = useMemo(() => {
+    if (summary.totalCostCents <= 0) {
+      return null;
+    }
+    const totalProfit = summary.totalBilledCents - summary.totalCostCents;
+    return Math.round((totalProfit / summary.totalCostCents) * 100);
+  }, [summary]);
+
+  const handleRefreshAll = async (): Promise<void> => {
+    await Promise.all([refresh(), refreshSummary()]);
+  };
 
   const loadRecentSales = useCallback(async (): Promise<void> => {
     setIsLoadingHistory(true);
@@ -120,7 +143,7 @@ export default function CatalogScreen() {
   const handleConfirmVoidSale = (sale: SaleWithItems): void => {
     Alert.alert(
       'Anular venta',
-      `¿Anular esta operación por ${formatCentsToARS(sale.totalCents)}? El stock se reintegrará automáticamente.`,
+      `¿Anular esta operación por ${formatCentsToUSD(sale.totalCents)}? El stock se reintegrará automáticamente.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -199,328 +222,535 @@ export default function CatalogScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <View style={styles.container}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.kicker}>INVENTARIO LOCAL</Text>
-            <Text style={styles.title}>Mi Kiosco</Text>
+    <AgendaPaperBackground>
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={styles.container}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.kicker}>AGENDA LOCAL · USD$</Text>
+              <Text style={styles.title}>Mi Kiosco</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.headerIconBtn,
+                  pressed && styles.headerIconBtnPressed,
+                ]}
+                onPress={handleOpenHistory}
+                accessibilityLabel="Historial de ventas"
+              >
+                <Ionicons name="receipt-outline" size={20} color={Colors.textPrimary} />
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.headerIconBtn,
+                  pressed && styles.headerIconBtnPressed,
+                ]}
+                onPress={lockNow}
+                accessibilityLabel="Cerrar agenda"
+              >
+                <Ionicons name="lock-closed-outline" size={20} color={Colors.textPrimary} />
+              </Pressable>
+            </View>
           </View>
-          <View style={styles.headerActions}>
-            <Pressable
-              style={({ pressed }) => [styles.headerIconBtn, pressed && styles.headerIconBtnPressed]}
-              onPress={handleOpenHistory}
-              accessibilityLabel="Historial de ventas"
-            >
-              <Ionicons name="receipt-outline" size={20} color={Colors.textPrimary} />
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.headerIconBtn, pressed && styles.headerIconBtnPressed]}
-              onPress={lockNow}
-              accessibilityLabel="Bloquear bóveda"
-            >
-              <Ionicons name="lock-closed-outline" size={20} color={Colors.textPrimary} />
-            </Pressable>
-          </View>
-        </View>
 
-        <View style={styles.kpiRow}>
-          <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>PRODUCTOS</Text>
-            <Text style={styles.kpiValue}>{products.length}</Text>
-          </View>
-          <View style={[styles.kpiCard, lowStockCount > 0 && styles.kpiCardAlert]}>
-            <Text style={styles.kpiLabel}>STOCK BAJO</Text>
-            <Text style={[styles.kpiValue, lowStockCount > 0 && styles.kpiValueAlert]}>
-              {lowStockCount}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={Colors.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Buscar jamón, alfombra, bebidas..."
-            placeholderTextColor={Colors.textMuted}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
-              <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
-            </Pressable>
-          )}
-        </View>
-
-        <View style={styles.categoriesWrapper}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoriesContent}
-          >
+          {/* Módulos financieros principales: Total a cobrar + Ganancia Neta */}
+          <View style={styles.kpiRow}>
             <Pressable
-              style={[
-                styles.categoryChip,
-                selectedCategoryId === null && styles.categoryChipActive,
+              style={({ pressed }) => [
+                styles.financeCard,
+                pressed && styles.financeCardPressed,
               ]}
-              onPress={() => setSelectedCategoryId(null)}
+              onPress={() => router.push('/(tabs)/customers')}
             >
+              <View style={styles.financeTopRow}>
+                <Text style={styles.financeLabel}>TOTAL A COBRAR</Text>
+                <Ionicons name="chevron-forward" size={14} color={Colors.vaultTextSecondary} />
+              </View>
+              <Text style={styles.financeValueGold} numberOfLines={1} adjustsFontSizeToFit>
+                {formatCentsToUSD(summary.pendingDebtCents)}
+              </Text>
+              <Text style={styles.financeSubtext}>Deudas abiertas en fiados</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.financeCard,
+                styles.financeCardProfit,
+                pressed && styles.financeCardPressed,
+              ]}
+              onPress={() => setProfitModalVisible(true)}
+            >
+              <View style={styles.financeTopRow}>
+                <Text style={styles.financeLabel}>GANANCIA NETA</Text>
+                <Ionicons name="stats-chart" size={13} color={Colors.primaryLight} />
+              </View>
               <Text
                 style={[
-                  styles.categoryChipText,
-                  selectedCategoryId === null && styles.categoryChipTextActive,
+                  styles.financeValueProfit,
+                  summary.realizedNetProfitCents < 0 && styles.financeValueLoss,
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {formatCentsToUSD(summary.realizedNetProfitCents)}
+              </Text>
+              <Text style={styles.financeSubtext}>Ya cobrada · Ver desglose</Text>
+            </Pressable>
+          </View>
+
+          {/* Resumen compacto de inventario */}
+          <View style={styles.inventoryStrip}>
+            <View style={styles.inventoryStat}>
+              <Ionicons name="cube-outline" size={14} color={Colors.textSecondary} />
+              <Text style={styles.inventoryStatText}>{products.length} productos</Text>
+            </View>
+            <View style={styles.inventoryDivider} />
+            <View style={styles.inventoryStat}>
+              <Ionicons
+                name="warning-outline"
+                size={14}
+                color={lowStockCount > 0 ? Colors.warning : Colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.inventoryStatText,
+                  lowStockCount > 0 && styles.inventoryStatWarning,
                 ]}
               >
-                Todas
+                {lowStockCount} con stock bajo
               </Text>
-            </Pressable>
-
-            {categories.map((cat) => {
-              const active = selectedCategoryId === cat.id;
-              return (
-                <Pressable
-                  key={cat.id}
-                  style={[styles.categoryChip, active && styles.categoryChipActive]}
-                  onPress={() => setSelectedCategoryId(cat.id)}
-                >
-                  <Text style={[styles.categoryChipText, active && styles.categoryChipTextActive]}>
-                    {cat.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-
-            <Pressable
-              style={styles.addCategoryChip}
-              onPress={() => {
-                setCategoryError(null);
-                setNewCategoryName('');
-                setCategoryModalVisible(true);
-              }}
-            >
-              <Ionicons name="add" size={16} color={Colors.primary} />
-              <Text style={styles.addCategoryText}>Categoría</Text>
-            </Pressable>
-          </ScrollView>
-        </View>
-
-        <ErrorBanner message={errorMessage} />
-
-        <FlatList
-          data={filteredProducts}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.gridRow}
-          contentContainerStyle={styles.gridContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isLoading}
-              onRefresh={() => void refresh()}
-              tintColor={Colors.primary}
-            />
-          }
-          renderItem={({ item }) => (
-            <ProductTile
-              product={item}
-              resolvedImageUri={services.imageStorageService.resolveImageUri(item.imageUri)}
-              onPress={handleOpenCheckout}
-              onEditPress={handleOpenEditProduct}
-            />
-          )}
-          ListEmptyComponent={
-            <View style={styles.emptyCard}>
-              <View style={styles.emptyIconCircle}>
-                <Ionicons name="sparkles-outline" size={28} color={Colors.primary} />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {searchQuery.trim().length > 0
-                  ? 'Sin resultados'
-                  : 'Tu catálogo está listo para arrancar'}
-              </Text>
-              <Text style={styles.emptySubtitle}>
-                {searchQuery.trim().length > 0
-                  ? 'Probá con otro nombre o quitá el filtro de categoría.'
-                  : 'Cargá tu primer producto con foto desde cámara, galería o internet.'}
-              </Text>
-              {searchQuery.trim().length === 0 && (
-                <Pressable
-                  style={({ pressed }) => [styles.emptyCta, pressed && styles.emptyCtaPressed]}
-                  onPress={handleOpenCreateProduct}
-                >
-                  <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
-                  <Text style={styles.emptyCtaText}>Crear primer producto</Text>
-                </Pressable>
-              )}
             </View>
-          }
-        />
+          </View>
 
-        <Pressable
-          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-          onPress={handleOpenCreateProduct}
-        >
-          <Ionicons name="add" size={24} color={Colors.white} />
-          <Text style={styles.fabText}>Producto</Text>
-        </Pressable>
-      </View>
-
-      {/* Modal de nueva categoría */}
-      <Modal
-        visible={categoryModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCategoryModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Nueva categoría</Text>
-            <ErrorBanner message={categoryError} />
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={Colors.textMuted} />
             <TextInput
-              style={styles.modalInput}
-              value={newCategoryName}
-              onChangeText={setNewCategoryName}
-              placeholder="Ej: Fiambrería, Alfombras, Relojes..."
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Buscar producto..."
               placeholderTextColor={Colors.textMuted}
-              autoFocus
+              returnKeyType="search"
             />
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.modalCancelBtn}
-                onPress={() => setCategoryModalVisible(false)}
-                disabled={isSavingCategory}
-              >
-                <Text style={styles.modalCancelText}>Cancelar</Text>
+            {searchQuery.length > 0 && (
+              <Pressable onPress={() => setSearchQuery('')} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
               </Pressable>
-              <Pressable
-                style={styles.modalSaveBtn}
-                onPress={() => void handleCreateCategory()}
-                disabled={isSavingCategory}
-              >
-                {isSavingCategory ? (
-                  <ActivityIndicator color={Colors.white} size="small" />
-                ) : (
-                  <Text style={styles.modalSaveText}>Guardar</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal de historial general de ventas (Contado, Fiado y Mixto) */}
-      <Modal
-        visible={historyModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setHistoryModalVisible(false)}
-      >
-        <SafeAreaView style={styles.historySafeArea} edges={['top', 'bottom']}>
-          <View style={styles.historyHeader}>
-            <View>
-              <Text style={styles.kicker}>MOVIMIENTOS RECIENTES</Text>
-              <Text style={styles.historyTitle}>Historial de ventas</Text>
-            </View>
-            <Pressable
-              style={styles.closeHistoryBtn}
-              onPress={() => setHistoryModalVisible(false)}
-            >
-              <Ionicons name="close" size={20} color={Colors.textPrimary} />
-            </Pressable>
-          </View>
-
-          <ScrollView contentContainerStyle={styles.historyScroll}>
-            <ErrorBanner message={historyError} />
-
-            {isLoadingHistory ? (
-              <ActivityIndicator color={Colors.primary} style={styles.historyLoader} />
-            ) : recentSales.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Ionicons name="receipt-outline" size={30} color={Colors.primary} />
-                <Text style={styles.emptyTitle}>Sin ventas registradas</Text>
-                <Text style={styles.emptySubtitle}>
-                  Tocá cualquier producto del catálogo para registrar una venta contado o un fiado.
-                </Text>
-              </View>
-            ) : (
-              recentSales.map((sale) => {
-                const isVoided = sale.status === 'VOIDED';
-                const customerLabel =
-                  sale.customerId !== null
-                    ? (customerNamesById.get(sale.customerId) ?? 'Cliente')
-                    : 'Venta al contado';
-
-                return (
-                  <View
-                    key={sale.id}
-                    style={[styles.saleCard, isVoided && styles.saleCardVoided]}
-                  >
-                    <View style={styles.saleTopRow}>
-                      <Text style={styles.saleDate}>{formatSaleDate(sale.createdAt)}</Text>
-                      <View style={styles.saleBadges}>
-                        <View style={styles.modeBadge}>
-                          <Text style={styles.modeBadgeText}>
-                            {getPaymentLabel(sale.paymentType)}
-                          </Text>
-                        </View>
-                        {isVoided && (
-                          <View style={styles.voidedBadge}>
-                            <Text style={styles.voidedBadgeText}>ANULADA</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-
-                    <Text style={styles.saleCustomer}>{customerLabel}</Text>
-
-                    {sale.items.map((item) => (
-                      <View key={item.id} style={styles.saleItemRow}>
-                        <Text style={styles.saleItemName}>
-                          {formatStockQty(item.quantity, item.unitTypeSnapshot)} ·{' '}
-                          {item.productNameSnapshot}
-                        </Text>
-                        <Text style={styles.saleItemPrice}>
-                          {formatCentsToARS(item.subtotalCents)}
-                        </Text>
-                      </View>
-                    ))}
-
-                    <View style={styles.saleBottomRow}>
-                      <Text style={styles.saleTotalText}>
-                        Total: {formatCentsToARS(sale.totalCents)}
-                      </Text>
-                      {!isVoided && (
-                        <Pressable
-                          style={styles.voidSaleBtn}
-                          onPress={() => handleConfirmVoidSale(sale)}
-                        >
-                          <Ionicons name="close-circle-outline" size={16} color={Colors.danger} />
-                          <Text style={styles.voidSaleBtnText}>Anular venta</Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  </View>
-                );
-              })
             )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-    </SafeAreaView>
+          </View>
+
+          <View style={styles.categoriesWrapper}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoriesContent}
+            >
+              <Pressable
+                style={[
+                  styles.categoryChip,
+                  selectedCategoryId === null && styles.categoryChipActive,
+                ]}
+                onPress={() => setSelectedCategoryId(null)}
+              >
+                <Text
+                  style={[
+                    styles.categoryChipText,
+                    selectedCategoryId === null && styles.categoryChipTextActive,
+                  ]}
+                >
+                  Todas
+                </Text>
+              </Pressable>
+
+              {categories.map((cat) => {
+                const active = selectedCategoryId === cat.id;
+                return (
+                  <Pressable
+                    key={cat.id}
+                    style={[styles.categoryChip, active && styles.categoryChipActive]}
+                    onPress={() => setSelectedCategoryId(cat.id)}
+                  >
+                    <Text
+                      style={[styles.categoryChipText, active && styles.categoryChipTextActive]}
+                    >
+                      {cat.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+
+              <Pressable
+                style={styles.addCategoryChip}
+                onPress={() => {
+                  setCategoryError(null);
+                  setNewCategoryName('');
+                  setCategoryModalVisible(true);
+                }}
+              >
+                <Ionicons name="add" size={16} color={Colors.primary} />
+                <Text style={styles.addCategoryText}>Categoría</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+
+          <ErrorBanner message={errorMessage ?? summaryError} />
+
+          <FlatList
+            data={filteredProducts}
+            keyExtractor={(item) => item.id}
+            numColumns={2}
+            columnWrapperStyle={styles.gridRow}
+            contentContainerStyle={styles.gridContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={isLoading || isLoadingSummary}
+                onRefresh={() => void handleRefreshAll()}
+                tintColor={Colors.primary}
+              />
+            }
+            renderItem={({ item }) => (
+              <ProductTile
+                product={item}
+                resolvedImageUri={services.imageStorageService.resolveImageUri(item.imageUri)}
+                onPress={handleOpenCheckout}
+                onEditPress={handleOpenEditProduct}
+              />
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyCard}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="sparkles-outline" size={28} color={Colors.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {searchQuery.trim().length > 0
+                    ? 'Sin resultados'
+                    : 'Tu agenda está lista para empezar'}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {searchQuery.trim().length > 0
+                    ? 'Probá con otro nombre o quitá el filtro de categoría.'
+                    : 'Cargá tu primer producto con costo, precio mayoreo/minoreo y foto o emoji.'}
+                </Text>
+                {searchQuery.trim().length === 0 && (
+                  <Pressable
+                    style={({ pressed }) => [styles.emptyCta, pressed && styles.emptyCtaPressed]}
+                    onPress={handleOpenCreateProduct}
+                  >
+                    <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
+                    <Text style={styles.emptyCtaText}>Crear primer producto</Text>
+                  </Pressable>
+                )}
+              </View>
+            }
+          />
+
+          <Pressable
+            style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+            onPress={handleOpenCreateProduct}
+          >
+            <Ionicons name="add" size={24} color={Colors.white} />
+            <Text style={styles.fabText}>Producto</Text>
+          </Pressable>
+        </View>
+
+        {/* Modal de Balance y Rentabilidad Detallada */}
+        <Modal
+          visible={profitModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setProfitModalVisible(false)}
+        >
+          <AgendaPaperBackground>
+            <SafeAreaView style={styles.historySafeArea} edges={['top', 'bottom']}>
+              <View style={styles.historyHeader}>
+                <View>
+                  <Text style={styles.kicker}>RENDIMIENTO DEL NEGOCIO</Text>
+                  <Text style={styles.historyTitle}>Ganancias y Balance</Text>
+                </View>
+                <Pressable
+                  style={styles.closeHistoryBtn}
+                  onPress={() => setProfitModalVisible(false)}
+                >
+                  <Ionicons name="close" size={20} color={Colors.textPrimary} />
+                </Pressable>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.historyScroll}>
+                <View style={styles.profitHeroCard}>
+                  <Text style={styles.financeLabel}>GANANCIA NETA YA COBRADA</Text>
+                  <Text style={styles.profitHeroAmount}>
+                    {formatCentsToUSD(summary.realizedNetProfitCents)}
+                  </Text>
+                  <Text style={styles.profitHeroCaption}>
+                    Es tu ganancia limpia real (venta menos costo) de todo lo que ya cobraste al
+                    contado y en pagos de deudas.
+                  </Text>
+                </View>
+
+                <View style={styles.breakdownCard}>
+                  <Text style={styles.sectionKicker}>DESGLOSE DE CAJA</Text>
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricLabelGroup}>
+                      <Text style={styles.metricTitle}>Dinero cobrado en mano</Text>
+                      <Text style={styles.metricHint}>Contado + adelantos + cobros de fiados</Text>
+                    </View>
+                    <Text style={styles.metricValue}>
+                      {formatCentsToUSD(summary.totalCollectedCents)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.metricSeparator} />
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricLabelGroup}>
+                      <Text style={styles.metricTitle}>Total pendiente por cobrar</Text>
+                      <Text style={styles.metricHint}>Deudas abiertas de tus clientes</Text>
+                    </View>
+                    <Text style={styles.metricValueWarning}>
+                      {formatCentsToUSD(summary.pendingDebtCents)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.metricSeparator} />
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricLabelGroup}>
+                      <Text style={styles.metricTitle}>Ganancia pendiente en fiados</Text>
+                      <Text style={styles.metricHint}>
+                        Se suma a tu Ganancia Neta a medida que cobres
+                      </Text>
+                    </View>
+                    <Text style={styles.metricValuePrimary}>
+                      {formatCentsToUSD(summary.pendingNetProfitCents)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.breakdownCard}>
+                  <Text style={styles.sectionKicker}>FACTURACIÓN VS. COSTOS</Text>
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricLabelGroup}>
+                      <Text style={styles.metricTitle}>Total facturado (ventas activas)</Text>
+                      <Text style={styles.metricHint}>Suma de ventas no anuladas</Text>
+                    </View>
+                    <Text style={styles.metricValue}>
+                      {formatCentsToUSD(summary.totalBilledCents)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.metricSeparator} />
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricLabelGroup}>
+                      <Text style={styles.metricTitle}>Costo de mercadería vendida</Text>
+                      <Text style={styles.metricHint}>
+                        Según el costo cargado en cada producto al vender
+                      </Text>
+                    </View>
+                    <Text style={styles.metricValue}>
+                      {formatCentsToUSD(summary.totalCostCents)}
+                    </Text>
+                  </View>
+
+                  {globalMarginPct !== null && (
+                    <>
+                      <View style={styles.metricSeparator} />
+                      <View style={styles.metricRow}>
+                        <View style={styles.metricLabelGroup}>
+                          <Text style={styles.metricTitle}>Margen promedio sobre costo</Text>
+                          <Text style={styles.metricHint}>Rentabilidad global acumulada</Text>
+                        </View>
+                        <Text style={styles.metricValuePrimary}>
+                          {globalMarginPct >= 0 ? `+${globalMarginPct}%` : `${globalMarginPct}%`}
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </AgendaPaperBackground>
+        </Modal>
+
+        {/* Modal de nueva categoría */}
+        <Modal
+          visible={categoryModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setCategoryModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Nueva categoría</Text>
+              <ErrorBanner message={categoryError} />
+              <TextInput
+                style={styles.modalInput}
+                value={newCategoryName}
+                onChangeText={setNewCategoryName}
+                placeholder="Ej: Fiambrería, Alfombras, Relojes..."
+                placeholderTextColor={Colors.textMuted}
+                autoFocus
+              />
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={styles.modalCancelBtn}
+                  onPress={() => setCategoryModalVisible(false)}
+                  disabled={isSavingCategory}
+                >
+                  <Text style={styles.modalCancelText}>Cancelar</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.modalSaveBtn}
+                  onPress={() => void handleCreateCategory()}
+                  disabled={isSavingCategory}
+                >
+                  {isSavingCategory ? (
+                    <ActivityIndicator color={Colors.white} size="small" />
+                  ) : (
+                    <Text style={styles.modalSaveText}>Guardar</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Modal de historial general de ventas (Contado, Fiado y Mixto) */}
+        <Modal
+          visible={historyModalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setHistoryModalVisible(false)}
+        >
+          <AgendaPaperBackground>
+            <SafeAreaView style={styles.historySafeArea} edges={['top', 'bottom']}>
+              <View style={styles.historyHeader}>
+                <View>
+                  <Text style={styles.kicker}>MOVIMIENTOS RECIENTES</Text>
+                  <Text style={styles.historyTitle}>Historial de ventas</Text>
+                </View>
+                <Pressable
+                  style={styles.closeHistoryBtn}
+                  onPress={() => setHistoryModalVisible(false)}
+                >
+                  <Ionicons name="close" size={20} color={Colors.textPrimary} />
+                </Pressable>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.historyScroll}>
+                <ErrorBanner message={historyError} />
+
+                {isLoadingHistory ? (
+                  <ActivityIndicator color={Colors.primary} style={styles.historyLoader} />
+                ) : recentSales.length === 0 ? (
+                  <View style={styles.emptyCard}>
+                    <Ionicons name="receipt-outline" size={30} color={Colors.primary} />
+                    <Text style={styles.emptyTitle}>Sin ventas registradas</Text>
+                    <Text style={styles.emptySubtitle}>
+                      Tocá cualquier producto del catálogo para registrar una venta contado o un
+                      fiado.
+                    </Text>
+                  </View>
+                ) : (
+                  recentSales.map((sale) => {
+                    const isVoided = sale.status === 'VOIDED';
+                    const customerLabel =
+                      sale.customerId !== null
+                        ? (customerNamesById.get(sale.customerId) ?? 'Cliente')
+                        : 'Venta al contado';
+                    const saleCostCents = sale.items.reduce(
+                      (acc, item) => acc + item.costSubtotalCents,
+                      0
+                    );
+                    const saleProfitCents = sale.totalCents - saleCostCents;
+
+                    return (
+                      <View
+                        key={sale.id}
+                        style={[styles.saleCard, isVoided && styles.saleCardVoided]}
+                      >
+                        <View style={styles.saleTopRow}>
+                          <Text style={styles.saleDate}>{formatSaleDate(sale.createdAt)}</Text>
+                          <View style={styles.saleBadges}>
+                            <View style={styles.modeBadge}>
+                              <Text style={styles.modeBadgeText}>
+                                {getPaymentLabel(sale.paymentType)}
+                              </Text>
+                            </View>
+                            {isVoided && (
+                              <View style={styles.voidedBadge}>
+                                <Text style={styles.voidedBadgeText}>ANULADA</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        <Text style={styles.saleCustomer}>{customerLabel}</Text>
+
+                        {sale.items.map((item) => (
+                          <View key={item.id} style={styles.saleItemRow}>
+                            <Text style={styles.saleItemName}>
+                              {formatStockQty(item.quantity, item.unitTypeSnapshot)} ·{' '}
+                              {item.productNameSnapshot}
+                              {item.saleTier === 'WHOLESALE' ? ' (Mayoreo)' : ''}
+                            </Text>
+                            <Text style={styles.saleItemPrice}>
+                              {formatCentsToUSD(item.subtotalCents)}
+                            </Text>
+                          </View>
+                        ))}
+
+                        <View style={styles.saleBottomRow}>
+                          <View>
+                            <Text style={styles.saleTotalText}>
+                              Total: {formatCentsToUSD(sale.totalCents)}
+                            </Text>
+                            {!isVoided && (
+                              <Text style={styles.saleProfitText}>
+                                Ganancia: {formatCentsToUSD(saleProfitCents)}
+                              </Text>
+                            )}
+                          </View>
+                          {!isVoided && sale.directPaidCents === 0 && (
+                            <Pressable
+                              style={styles.voidSaleBtn}
+                              onPress={() => handleConfirmVoidSale(sale)}
+                            >
+                              <Ionicons
+                                name="close-circle-outline"
+                                size={16}
+                                color={Colors.danger}
+                              />
+                              <Text style={styles.voidSaleBtnText}>Anular venta</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </SafeAreaView>
+          </AgendaPaperBackground>
+        </Modal>
+      </SafeAreaView>
+    </AgendaPaperBackground>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   container: {
     flex: 1,
     paddingHorizontal: Spacing.lg,
-    gap: Spacing.md,
+    gap: Spacing.sm,
   },
   headerRow: {
     flexDirection: 'row',
@@ -561,34 +791,81 @@ const styles = StyleSheet.create({
   },
   kpiRow: {
     flexDirection: 'row',
-    gap: Spacing.md,
+    gap: Spacing.sm,
   },
-  kpiCard: {
+  financeCard: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.vaultBackground,
     borderRadius: Radius.lg,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 2,
+    borderColor: Colors.vaultBorderHighlight,
+    gap: 3,
+    ...Shadows.card,
   },
-  kpiCardAlert: {
-    borderColor: Colors.warning,
-    backgroundColor: Colors.warningSoft,
+  financeCardProfit: {
+    borderColor: 'rgba(16, 185, 129, 0.45)',
   },
-  kpiLabel: {
+  financeCardPressed: {
+    opacity: 0.88,
+  },
+  financeTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  financeLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: Colors.textSecondary,
+    color: Colors.vaultTextSecondary,
     letterSpacing: 0.8,
   },
-  kpiValue: {
-    fontSize: Typography.title,
+  financeValueGold: {
+    fontSize: 20,
     fontWeight: '800',
-    color: Colors.textPrimary,
+    color: Colors.gold,
   },
-  kpiValueAlert: {
+  financeValueProfit: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.primaryLight,
+  },
+  financeValueLoss: {
+    color: '#FCA5A5',
+  },
+  financeSubtext: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.vaultTextMuted,
+  },
+  inventoryStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: 7,
+    paddingHorizontal: Spacing.md,
+  },
+  inventoryStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inventoryStatText: {
+    fontSize: Typography.caption,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  inventoryStatWarning: {
     color: Colors.warning,
+  },
+  inventoryDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: Colors.border,
   },
   searchBar: {
     flexDirection: 'row',
@@ -599,7 +876,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.lg,
-    height: 46,
+    height: 44,
   },
   searchInput: {
     flex: 1,
@@ -667,6 +944,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
     borderWidth: 1,
     borderColor: Colors.border,
+    ...Shadows.card,
   },
   emptyIconCircle: {
     width: 60,
@@ -730,7 +1008,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 9, 11, 0.55)',
+    backgroundColor: 'rgba(7, 11, 10, 0.58)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.xl,
@@ -789,7 +1067,7 @@ const styles = StyleSheet.create({
   },
   historySafeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   historyHeader: {
     flexDirection: 'row',
@@ -821,6 +1099,79 @@ const styles = StyleSheet.create({
   },
   historyLoader: {
     marginVertical: Spacing.xl,
+  },
+  profitHeroCard: {
+    backgroundColor: Colors.vaultBackground,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    gap: Spacing.xs,
+    borderWidth: 1,
+    borderColor: Colors.primaryLight,
+    ...Shadows.floating,
+  },
+  profitHeroAmount: {
+    fontSize: 34,
+    fontWeight: '900',
+    color: Colors.primaryLight,
+  },
+  profitHeroCaption: {
+    fontSize: Typography.caption,
+    color: Colors.vaultTextSecondary,
+    lineHeight: 19,
+    marginTop: Spacing.xs,
+  },
+  breakdownCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.card,
+  },
+  sectionKicker: {
+    fontSize: Typography.micro,
+    fontWeight: '800',
+    color: Colors.primary,
+    letterSpacing: 1,
+  },
+  metricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  metricLabelGroup: {
+    flex: 1,
+    gap: 2,
+  },
+  metricTitle: {
+    fontSize: Typography.body,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  metricHint: {
+    fontSize: Typography.micro,
+    color: Colors.textSecondary,
+  },
+  metricValue: {
+    fontSize: Typography.body,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  metricValuePrimary: {
+    fontSize: Typography.body,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  metricValueWarning: {
+    fontSize: Typography.body,
+    fontWeight: '800',
+    color: Colors.warning,
+  },
+  metricSeparator: {
+    height: 1,
+    backgroundColor: Colors.borderSubtle,
   },
   saleCard: {
     backgroundColor: Colors.surface,
@@ -903,6 +1254,11 @@ const styles = StyleSheet.create({
     fontSize: Typography.body,
     fontWeight: '800',
     color: Colors.textPrimary,
+  },
+  saleProfitText: {
+    fontSize: Typography.micro,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   voidSaleBtn: {
     flexDirection: 'row',

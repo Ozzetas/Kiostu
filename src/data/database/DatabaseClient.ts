@@ -1,6 +1,12 @@
 import * as SQLite from 'expo-sqlite';
 import { Logger } from '../../core/logging/Logger';
-import { CONNECTION_PRAGMAS_SQL, INITIAL_SCHEMA_SQL, SCHEMA_VERSION } from './schema';
+import {
+  CONNECTION_PRAGMAS_SQL,
+  INITIAL_SCHEMA_SQL,
+  MIGRATION_V1_TO_V2_SQL,
+  MIGRATION_V2_TO_V3_SQL,
+  SCHEMA_VERSION,
+} from './schema';
 import { mapSqliteError } from './sqliteErrorMapper';
 
 export const DB_FILE_NAME = 'kiosco_ledger.db';
@@ -64,6 +70,7 @@ export class DatabaseClient {
       // Configuro WAL, foreign_keys y busy_timeout fuera de transacción antes de ejecutar migraciones DDL.
       await database.execAsync(CONNECTION_PRAGMAS_SQL);
       await this.runMigrations(database);
+
       this.db = database;
       this.logger.info('Conexión SQLite inicializada y migrada', {
         dbName: DB_FILE_NAME,
@@ -96,6 +103,13 @@ export class DatabaseClient {
     await database.withExclusiveTransactionAsync(async (txn) => {
       if (currentVersion === 0) {
         await txn.execAsync(INITIAL_SCHEMA_SQL);
+      } else {
+        if (currentVersion < 2) {
+          await txn.execAsync(MIGRATION_V1_TO_V2_SQL);
+        }
+        if (currentVersion < 3) {
+          await txn.execAsync(MIGRATION_V2_TO_V3_SQL);
+        }
       }
       await txn.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     });

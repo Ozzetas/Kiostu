@@ -11,18 +11,18 @@ export function PrivacyOverlay({ visible }: PrivacyOverlayProps) {
     return null;
   }
 
+  // Uso StyleSheet.absoluteFill en el array de estilos por compatibilidad estricta con RN 0.88+.
   return (
-    // Uso StyleSheet.absoluteFill en el array de estilos por compatibilidad estricta con RN 0.88+.
     <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="auto">
       <View style={styles.emblemOuter}>
         <View style={styles.emblemInner}>
-          <Ionicons name="shield-half" size={34} color={Colors.primaryLight} />
+          <Text style={styles.currencyMark}>USD$</Text>
         </View>
       </View>
-      <Text style={styles.brand}>KIOSCO</Text>
+      <Text style={styles.brand}>AGENDA</Text>
       <View style={styles.pill}>
-        <Ionicons name="lock-closed" size={12} color={Colors.vaultTextSecondary} />
-        <Text style={styles.pillText}>SESIÓN PROTEGIDA</Text>
+        <Ionicons name="lock-closed" size={12} color={Colors.primaryLight} />
+        <Text style={styles.pillText}>AGENDA CERRADA · 100% LOCAL</Text>
       </View>
     </View>
   );
@@ -37,31 +37,37 @@ const styles = StyleSheet.create({
     zIndex: 9999,
   },
   emblemOuter: {
-    width: 88,
-    height: 88,
+    width: 96,
+    height: 96,
     borderRadius: Radius.xl,
     backgroundColor: Colors.primaryGlow,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderColor: Colors.primaryLight,
     ...Shadows.glowPrimary,
   },
   emblemInner: {
-    width: 64,
-    height: 64,
+    width: 72,
+    height: 72,
     borderRadius: Radius.lg,
     backgroundColor: Colors.vaultSurface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: Colors.vaultBorderHighlight,
+    borderColor: Colors.gold,
+  },
+  currencyMark: {
+    color: Colors.gold,
+    fontSize: Typography.subtitle,
+    fontWeight: '900',
+    letterSpacing: 0.6,
   },
   brand: {
     color: Colors.vaultTextPrimary,
     fontSize: Typography.title,
     fontWeight: '800',
-    letterSpacing: 4,
+    letterSpacing: 5,
     marginTop: Spacing.xs,
   },
   pill: {
@@ -70,7 +76,7 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: Colors.vaultSurface,
     borderWidth: 1,
-    borderColor: Colors.vaultBorder,
+    borderColor: Colors.vaultBorderHighlight,
     borderRadius: Radius.full,
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
@@ -79,6 +85,6 @@ const styles = StyleSheet.create({
     color: Colors.vaultTextSecondary,
     fontSize: Typography.micro,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 1.1,
   },
 });

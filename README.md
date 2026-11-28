@@ -108,4 +108,4 @@ src/
 - [x] **Fase 4:** Gestión local de imágenes 300×300 (cámara, galería y URL)
 - [ ] **Fase 5:** Interfaz táctil Bento POS, historial con anulación, cuentas corrientes y ajustes *(en validación final)*
 - [ ] **Fase 6:** Backup y Restauración portable (`BackupFacade.ts`)
-- [ ] **Fase 7:** QA de casos límite, compilación nativa con EAS Build y distribución
+- [ ] **Fase 7:** QA de casos límite, compilación nativa con EAS Build y distribucióngit add .

@@ -2,27 +2,29 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppError } from '../../src/core/errors/AppError';
 import { Logger } from '../../src/core/logging/Logger';
 import {
-    calculateLineSubtotalCents,
-    formatCentsToARS,
-    parseCurrencyToCents,
+  calculateLineSubtotalCents,
+  formatCentsToUSD,
+  parseCurrencyToCents,
 } from '../../src/core/utils/money';
+import { parseProductVisual } from '../../src/core/utils/productVisual';
 import { formatPriceLabel, formatStockQty } from '../../src/core/utils/units';
-import { Customer, PaymentType, Product } from '../../src/domain/entities/types';
+import { Customer, PaymentType, Product, SaleTier } from '../../src/domain/entities/types';
+import { AgendaPaperBackground } from '../../src/presentation/components/AgendaPaperBackground';
 import { ErrorBanner } from '../../src/presentation/components/ErrorBanner';
 import { useAppServices } from '../../src/presentation/di/AppServicesProvider';
 import { Colors, Radius, Shadows, Spacing, Typography } from '../../src/presentation/theme/tokens';
@@ -30,8 +32,9 @@ import { Colors, Radius, Shadows, Spacing, Typography } from '../../src/presenta
 const logger = new Logger('CheckoutWeightModal');
 
 const GRAM_PRESETS: readonly { readonly label: string; readonly qty: number }[] = [
+  { label: '1 g', qty: 1 },
+  { label: '10 g', qty: 10 },
   { label: '100 g', qty: 100 },
-  { label: '200 g', qty: 200 },
   { label: '250 g', qty: 250 },
   { label: '500 g', qty: 500 },
   { label: '1 kg', qty: 1000 },
@@ -52,6 +55,7 @@ export default function CheckoutWeightModal() {
   const [product, setProduct] = useState<Product | null>(null);
   const [customers, setCustomers] = useState<readonly Customer[]>([]);
 
+  const [saleTier, setSaleTier] = useState<SaleTier>('RETAIL');
   const [quantityInput, setQuantityInput] = useState('1');
   const [paymentType, setPaymentType] = useState<PaymentType>('CREDIT');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -86,7 +90,11 @@ export default function CheckoutWeightModal() {
           setErrorMessage('El producto seleccionado no existe o fue desactivado.');
         } else {
           setProduct(loadedProduct);
-          setQuantityInput(loadedProduct.unitType === 'GRAM' ? '200' : '1');
+          if (loadedProduct.unitType === 'GRAM') {
+            setQuantityInput(loadedProduct.priceBaseQty === 1 ? '1' : '100');
+          } else {
+            setQuantityInput('1');
+          }
         }
 
         setCustomers(loadedCustomers);
@@ -124,20 +132,50 @@ export default function CheckoutWeightModal() {
     return Number.isSafeInteger(val) && val > 0 ? val : 0;
   }, [quantityInput]);
 
-  const subtotalCents = useMemo(() => {
-    if (product === null || parsedQty <= 0) {
+  const effectiveUnitPriceCents = useMemo(() => {
+    if (product === null) {
       return 0;
+    }
+    return saleTier === 'WHOLESALE' ? product.wholesalePriceCents : product.unitPriceCents;
+  }, [product, saleTier]);
+
+  const { subtotalCents, costSubtotalCents, estimatedProfitCents } = useMemo(() => {
+    if (product === null || parsedQty <= 0) {
+      return { subtotalCents: 0, costSubtotalCents: 0, estimatedProfitCents: 0 };
     }
     try {
-      return calculateLineSubtotalCents(product.unitPriceCents, product.priceBaseQty, parsedQty);
+      const subtotal = calculateLineSubtotalCents(
+        effectiveUnitPriceCents,
+        product.priceBaseQty,
+        parsedQty
+      );
+      const cost = calculateLineSubtotalCents(
+        product.costPriceCents,
+        product.priceBaseQty,
+        parsedQty
+      );
+      return {
+        subtotalCents: subtotal,
+        costSubtotalCents: cost,
+        estimatedProfitCents: subtotal - cost,
+      };
     } catch {
-      return 0;
+      return { subtotalCents: 0, costSubtotalCents: 0, estimatedProfitCents: 0 };
     }
-  }, [product, parsedQty]);
+  }, [product, effectiveUnitPriceCents, parsedQty]);
 
   const handleStepUnit = (delta: number): void => {
     const next = Math.max(1, parsedQty + delta);
     setQuantityInput(String(next));
+  };
+
+  const handleQtyChange = (raw: string): void => {
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    if (digitsOnly.length > 1 && digitsOnly.startsWith('0')) {
+      setQuantityInput(digitsOnly.replace(/^0+/, ''));
+      return;
+    }
+    setQuantityInput(digitsOnly);
   };
 
   const handleQuickCreateCustomer = async (): Promise<void> => {
@@ -215,7 +253,7 @@ export default function CheckoutWeightModal() {
         return;
       }
       if (paidCents <= 0 || paidCents >= subtotalCents) {
-        setErrorMessage('El adelanto debe ser mayor a $0 y menor al total de la venta.');
+        setErrorMessage('El adelanto debe ser mayor a USD$ 0 y menor al total de la venta.');
         return;
       }
     }
@@ -227,7 +265,7 @@ export default function CheckoutWeightModal() {
         customerId: paymentType === 'CASH' ? null : selectedCustomerId,
         paymentType,
         paidCents,
-        items: [{ productId: product.id, quantity: parsedQty }],
+        items: [{ productId: product.id, quantity: parsedQty, saleTier }],
       });
 
       notifyDataChanged();
@@ -237,6 +275,7 @@ export default function CheckoutWeightModal() {
       logger.error('Error al registrar operación desde checkout rápido', normalized, {
         productId: product.id,
         paymentType,
+        saleTier,
       });
       setErrorMessage(
         error instanceof AppError ? error.message : 'No se pudo completar la operación.'
@@ -248,312 +287,397 @@ export default function CheckoutWeightModal() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-      </SafeAreaView>
+      <AgendaPaperBackground>
+        <SafeAreaView style={styles.centered}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </SafeAreaView>
+      </AgendaPaperBackground>
     );
   }
 
   if (product === null) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ErrorBanner message={errorMessage ?? 'Producto no disponible.'} />
-      </SafeAreaView>
+      <AgendaPaperBackground>
+        <SafeAreaView style={styles.centered}>
+          <ErrorBanner message={errorMessage ?? 'Producto no disponible.'} />
+        </SafeAreaView>
+      </AgendaPaperBackground>
     );
   }
 
-  const resolvedImageUri = services.imageStorageService.resolveImageUri(product.imageUri);
+  const parsedVisual = parseProductVisual(product.imageUri);
+  const resolvedImageUri =
+    parsedVisual.kind === 'IMAGE'
+      ? services.imageStorageService.resolveImageUri(parsedVisual.fileName)
+      : null;
   const isOutOfStock = product.stockQty === 0;
   const exceedsStock = parsedQty > product.stockQty;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flexOne}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+    <AgendaPaperBackground>
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <KeyboardAvoidingView
+          style={styles.flexOne}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <ErrorBanner message={errorMessage} />
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <ErrorBanner message={errorMessage} />
 
-          {/* Cabecera del producto */}
-          <View style={styles.productCard}>
-            <View style={styles.thumbBox}>
-              {resolvedImageUri !== null ? (
-                <Image source={{ uri: resolvedImageUri }} style={styles.thumbImage} />
-              ) : (
-                <Ionicons
-                  name={product.unitType === 'GRAM' ? 'scale-outline' : 'cube-outline'}
-                  size={28}
-                  color={Colors.primary}
-                />
-              )}
-            </View>
-            <View style={styles.productInfo}>
-              <Text style={styles.productName} numberOfLines={2}>
-                {product.name}
-              </Text>
-              <Text style={styles.productPrice}>
-                {formatPriceLabel(product.unitPriceCents, product.unitType, product.priceBaseQty)}
-              </Text>
-              <Text style={[styles.stockLabel, isOutOfStock && styles.stockLabelDanger]}>
-                Stock disponible: {formatStockQty(product.stockQty, product.unitType)}
-              </Text>
-            </View>
-          </View>
-
-          {isOutOfStock && (
-            <ErrorBanner message="Sin stock disponible. Tocá el lápiz del producto en el catálogo para reponer." />
-          )}
-
-          {/* Selector táctil de cantidad / gramos */}
-          <View style={styles.bentoCard}>
-            <Text style={styles.sectionKicker}>
-              {product.unitType === 'GRAM' ? 'PESO A DESPACHAR (GRAMOS)' : 'CANTIDAD DE UNIDADES'}
-            </Text>
-
-            {product.unitType === 'GRAM' ? (
-              <View style={styles.presetsGrid}>
-                {GRAM_PRESETS.map((preset) => {
-                  const selected = parsedQty === preset.qty;
-                  return (
-                    <Pressable
-                      key={preset.qty}
-                      style={[styles.presetChip, selected && styles.presetChipActive]}
-                      onPress={() => setQuantityInput(String(preset.qty))}
-                    >
-                      <Text
-                        style={[styles.presetChipText, selected && styles.presetChipTextActive]}
-                      >
-                        {preset.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            <View style={styles.productCard}>
+              <View style={styles.thumbBox}>
+                {parsedVisual.kind === 'EMOJI' ? (
+                  <Text style={styles.thumbEmoji}>{parsedVisual.emoji}</Text>
+                ) : resolvedImageUri !== null ? (
+                  <Image source={{ uri: resolvedImageUri }} style={styles.thumbImage} />
+                ) : (
+                  <Ionicons
+                    name={product.unitType === 'GRAM' ? 'scale-outline' : 'cube-outline'}
+                    size={28}
+                    color={Colors.primary}
+                  />
+                )}
               </View>
-            ) : (
-              <View style={styles.unitControlsRow}>
+              <View style={styles.productInfo}>
+                <Text style={styles.productName} numberOfLines={2}>
+                  {product.name}
+                </Text>
+                <Text style={styles.productPrice}>
+                  {formatPriceLabel(
+                    effectiveUnitPriceCents,
+                    product.unitType,
+                    product.priceBaseQty
+                  )}
+                </Text>
+                <Text style={[styles.stockLabel, isOutOfStock && styles.stockLabelDanger]}>
+                  Stock disponible: {formatStockQty(product.stockQty, product.unitType)}
+                </Text>
+              </View>
+            </View>
+
+            {isOutOfStock && (
+              <ErrorBanner message="Sin stock disponible. Tocá el lápiz del producto en el catálogo para reponer." />
+            )}
+
+            {/* Tarifa Minoreo / Mayoreo */}
+            <View style={styles.bentoCard}>
+              <Text style={styles.sectionKicker}>TIPO DE PRECIO</Text>
+              <View style={styles.segmentedRow}>
                 <Pressable
-                  style={styles.stepperBtn}
-                  onPress={() => handleStepUnit(-1)}
-                  accessibilityLabel="Restar una unidad"
+                  style={[styles.tierBtn, saleTier === 'RETAIL' && styles.tierBtnActive]}
+                  onPress={() => setSaleTier('RETAIL')}
                 >
-                  <Ionicons name="remove" size={22} color={Colors.textPrimary} />
+                  <Text style={[styles.tierTitle, saleTier === 'RETAIL' && styles.tierTitleActive]}>
+                    Minoreo
+                  </Text>
+                  <Text style={[styles.tierPrice, saleTier === 'RETAIL' && styles.tierPriceActive]}>
+                    {formatPriceLabel(
+                      product.unitPriceCents,
+                      product.unitType,
+                      product.priceBaseQty
+                    )}
+                  </Text>
                 </Pressable>
-                <View style={styles.presetsInline}>
-                  {UNIT_PRESETS.map((qty) => {
-                    const selected = parsedQty === qty;
+
+                <Pressable
+                  style={[styles.tierBtn, saleTier === 'WHOLESALE' && styles.tierBtnActive]}
+                  onPress={() => setSaleTier('WHOLESALE')}
+                >
+                  <Text
+                    style={[styles.tierTitle, saleTier === 'WHOLESALE' && styles.tierTitleActive]}
+                  >
+                    Mayoreo
+                  </Text>
+                  <Text
+                    style={[styles.tierPrice, saleTier === 'WHOLESALE' && styles.tierPriceActive]}
+                  >
+                    {formatPriceLabel(
+                      product.wholesalePriceCents,
+                      product.unitType,
+                      product.priceBaseQty
+                    )}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {/* Selector de cantidad */}
+            <View style={styles.bentoCard}>
+              <Text style={styles.sectionKicker}>
+                {product.unitType === 'GRAM' ? 'PESO A DESPACHAR (GRAMOS)' : 'CANTIDAD DE UNIDADES'}
+              </Text>
+
+              {product.unitType === 'GRAM' ? (
+                <View style={styles.presetsGrid}>
+                  {GRAM_PRESETS.map((preset) => {
+                    const selected = parsedQty === preset.qty;
                     return (
                       <Pressable
-                        key={qty}
-                        style={[styles.miniPreset, selected && styles.presetChipActive]}
-                        onPress={() => setQuantityInput(String(qty))}
+                        key={preset.qty}
+                        style={[styles.presetChip, selected && styles.presetChipActive]}
+                        onPress={() => setQuantityInput(String(preset.qty))}
                       >
                         <Text
                           style={[styles.presetChipText, selected && styles.presetChipTextActive]}
                         >
-                          {qty}
+                          {preset.label}
                         </Text>
                       </Pressable>
                     );
                   })}
                 </View>
-                <Pressable
-                  style={styles.stepperBtn}
-                  onPress={() => handleStepUnit(1)}
-                  accessibilityLabel="Sumar una unidad"
-                >
-                  <Ionicons name="add" size={22} color={Colors.textPrimary} />
-                </Pressable>
-              </View>
-            )}
-
-            <View style={styles.manualRow}>
-              <Text style={styles.label}>
-                {product.unitType === 'GRAM' ? 'Ingreso manual (g)' : 'Ingreso manual (u.)'}
-              </Text>
-              <TextInput
-                style={[styles.qtyInput, exceedsStock && styles.qtyInputError]}
-                value={quantityInput}
-                onChangeText={setQuantityInput}
-                keyboardType="number-pad"
-                placeholder={product.unitType === 'GRAM' ? 'Ej: 350' : 'Ej: 4'}
-                placeholderTextColor={Colors.textMuted}
-              />
-            </View>
-          </View>
-
-          {/* Modalidad de cobro */}
-          <View style={styles.bentoCard}>
-            <Text style={styles.sectionKicker}>MODALIDAD DE PAGO</Text>
-            <View style={styles.segmentedRow}>
-              {(
-                [
-                  { id: 'CREDIT', label: 'Fiado', icon: 'bookmark-outline' },
-                  { id: 'CASH', label: 'Contado', icon: 'cash-outline' },
-                  { id: 'MIXED', label: 'Mixto', icon: 'pie-chart-outline' },
-                ] as const
-              ).map((mode) => {
-                const active = paymentType === mode.id;
-                return (
+              ) : (
+                <View style={styles.unitControlsRow}>
                   <Pressable
-                    key={mode.id}
-                    style={[styles.modeBtn, active && styles.modeBtnActive]}
-                    onPress={() => setPaymentType(mode.id)}
+                    style={styles.stepperBtn}
+                    onPress={() => handleStepUnit(-1)}
+                    accessibilityLabel="Restar una unidad"
                   >
-                    <Ionicons
-                      name={mode.icon}
-                      size={16}
-                      color={active ? Colors.white : Colors.textSecondary}
-                    />
-                    <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]}>
-                      {mode.label}
-                    </Text>
+                    <Ionicons name="remove" size={22} color={Colors.textPrimary} />
                   </Pressable>
-                );
-              })}
-            </View>
-
-            {paymentType !== 'CASH' && (
-              <View style={styles.customerSection}>
-                <View style={styles.customerHeader}>
-                  <Text style={styles.label}>Cliente *</Text>
-                  <Pressable
-                    style={styles.quickAddBtn}
-                    onPress={() => setShowQuickCustomer((prev) => !prev)}
-                  >
-                    <Ionicons name="person-add-outline" size={14} color={Colors.primary} />
-                    <Text style={styles.quickAddText}>
-                      {showQuickCustomer ? 'Cerrar' : 'Nuevo cliente'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {showQuickCustomer && (
-                  <View style={styles.quickFormRow}>
-                    <TextInput
-                      style={styles.quickInput}
-                      value={quickCustomerName}
-                      onChangeText={setQuickCustomerName}
-                      placeholder="Nombre (ej: Juancito 4°B)"
-                      placeholderTextColor={Colors.textMuted}
-                    />
-                    <Pressable
-                      style={styles.quickSaveBtn}
-                      onPress={() => void handleQuickCreateCustomer()}
-                      disabled={isCreatingCustomer}
-                    >
-                      {isCreatingCustomer ? (
-                        <ActivityIndicator color={Colors.white} size="small" />
-                      ) : (
-                        <Text style={styles.quickSaveText}>Crear</Text>
-                      )}
-                    </Pressable>
-                  </View>
-                )}
-
-                {customers.length === 0 ? (
-                  <Text style={styles.emptyCustomerHint}>
-                    Todavía no hay clientes agendados. Tocá "Nuevo cliente" para cargarlo en 2
-                    segundos.
-                  </Text>
-                ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.customerPills}
-                  >
-                    {customers.map((c) => {
-                      const selected = selectedCustomerId === c.id;
+                  <View style={styles.presetsInline}>
+                    {UNIT_PRESETS.map((qty) => {
+                      const selected = parsedQty === qty;
                       return (
                         <Pressable
-                          key={c.id}
-                          style={[styles.customerPill, selected && styles.customerPillActive]}
-                          onPress={() => setSelectedCustomerId(c.id)}
+                          key={qty}
+                          style={[styles.miniPreset, selected && styles.presetChipActive]}
+                          onPress={() => setQuantityInput(String(qty))}
                         >
                           <Text
-                            style={[
-                              styles.customerPillText,
-                              selected && styles.customerPillTextActive,
-                            ]}
+                            style={[styles.presetChipText, selected && styles.presetChipTextActive]}
                           >
-                            {c.fullName}
+                            {qty}
                           </Text>
                         </Pressable>
                       );
                     })}
-                  </ScrollView>
-                )}
-              </View>
-            )}
+                  </View>
+                  <Pressable
+                    style={styles.stepperBtn}
+                    onPress={() => handleStepUnit(1)}
+                    accessibilityLabel="Sumar una unidad"
+                  >
+                    <Ionicons name="add" size={22} color={Colors.textPrimary} />
+                  </Pressable>
+                </View>
+              )}
 
-            {paymentType === 'MIXED' && (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Adelanto que paga ahora ($)</Text>
+              <View style={styles.manualRow}>
+                <Text style={styles.label}>
+                  {product.unitType === 'GRAM' ? 'Ingreso manual (g)' : 'Ingreso manual (u.)'}
+                </Text>
                 <TextInput
-                  style={styles.input}
-                  value={partialPaidInput}
-                  onChangeText={setPartialPaidInput}
-                  placeholder="Ej: 2000"
+                  style={[styles.qtyInput, exceedsStock && styles.qtyInputError]}
+                  value={quantityInput}
+                  onChangeText={handleQtyChange}
+                  onFocus={() => {
+                    if (quantityInput.trim() === '0') {
+                      setQuantityInput('');
+                    }
+                  }}
+                  selectTextOnFocus
+                  keyboardType="number-pad"
+                  placeholder="0"
                   placeholderTextColor={Colors.textMuted}
-                  keyboardType="decimal-pad"
                 />
               </View>
-            )}
-          </View>
-
-          {/* Resumen congelado */}
-          <View style={styles.totalCard}>
-            <View>
-              <Text style={styles.totalKicker}>
-                {paymentType === 'CASH' ? 'TOTAL CONTADO' : 'PRECIO HISTÓRICO CONGELADO'}
-              </Text>
-              <Text style={styles.totalAmount}>{formatCentsToARS(subtotalCents)}</Text>
             </View>
-            <View style={styles.frozenTag}>
-              <Ionicons name="snow-outline" size={14} color={Colors.primaryLight} />
-              <Text style={styles.frozenTagText}>
-                {parsedQty > 0 ? formatStockQty(parsedQty, product.unitType) : '0'}
-              </Text>
-            </View>
-          </View>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.confirmBtn,
-              (pressed || isSubmitting || isOutOfStock) && styles.confirmBtnDisabled,
-            ]}
-            onPress={() => void handleSubmitSale()}
-            disabled={isSubmitting || isOutOfStock}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color={Colors.white} />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle-outline" size={20} color={Colors.white} />
-                <Text style={styles.confirmBtnText}>
-                  {paymentType === 'CASH'
-                    ? 'Confirmar venta'
-                    : paymentType === 'CREDIT'
-                      ? 'Anotar fiado'
-                      : 'Confirmar pago mixto'}
+            {/* Modalidad de cobro */}
+            <View style={styles.bentoCard}>
+              <Text style={styles.sectionKicker}>MODALIDAD DE PAGO</Text>
+              <View style={styles.segmentedRow}>
+                {(
+                  [
+                    { id: 'CREDIT', label: 'Fiado', icon: 'bookmark-outline' },
+                    { id: 'CASH', label: 'Contado', icon: 'cash-outline' },
+                    { id: 'MIXED', label: 'Mixto', icon: 'pie-chart-outline' },
+                  ] as const
+                ).map((mode) => {
+                  const active = paymentType === mode.id;
+                  return (
+                    <Pressable
+                      key={mode.id}
+                      style={[styles.modeBtn, active && styles.modeBtnActive]}
+                      onPress={() => setPaymentType(mode.id)}
+                    >
+                      <Ionicons
+                        name={mode.icon}
+                        size={16}
+                        color={active ? Colors.white : Colors.textSecondary}
+                      />
+                      <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]}>
+                        {mode.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {paymentType !== 'CASH' && (
+                <View style={styles.customerSection}>
+                  <View style={styles.customerHeader}>
+                    <Text style={styles.label}>Cliente *</Text>
+                    <Pressable
+                      style={styles.quickAddBtn}
+                      onPress={() => setShowQuickCustomer((prev) => !prev)}
+                    >
+                      <Ionicons name="person-add-outline" size={14} color={Colors.primary} />
+                      <Text style={styles.quickAddText}>
+                        {showQuickCustomer ? 'Cerrar' : 'Nuevo cliente'}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {showQuickCustomer && (
+                    <View style={styles.quickFormRow}>
+                      <TextInput
+                        style={styles.quickInput}
+                        value={quickCustomerName}
+                        onChangeText={setQuickCustomerName}
+                        placeholder="Nombre (ej: Juancito 4°B)"
+                        placeholderTextColor={Colors.textMuted}
+                      />
+                      <Pressable
+                        style={styles.quickSaveBtn}
+                        onPress={() => void handleQuickCreateCustomer()}
+                        disabled={isCreatingCustomer}
+                      >
+                        {isCreatingCustomer ? (
+                          <ActivityIndicator color={Colors.white} size="small" />
+                        ) : (
+                          <Text style={styles.quickSaveText}>Crear</Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  )}
+
+                  {customers.length === 0 ? (
+                    <Text style={styles.emptyCustomerHint}>
+                      Todavía no hay clientes agendados. Tocá "Nuevo cliente" para cargarlo en 2
+                      segundos.
+                    </Text>
+                  ) : (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.customerPills}
+                    >
+                      {customers.map((c) => {
+                        const selected = selectedCustomerId === c.id;
+                        return (
+                          <Pressable
+                            key={c.id}
+                            style={[styles.customerPill, selected && styles.customerPillActive]}
+                            onPress={() => setSelectedCustomerId(c.id)}
+                          >
+                            <Text
+                              style={[
+                                styles.customerPillText,
+                                selected && styles.customerPillTextActive,
+                              ]}
+                            >
+                              {c.fullName}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                </View>
+              )}
+
+              {paymentType === 'MIXED' && (
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Adelanto que paga ahora (USD$)</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={partialPaidInput}
+                    onChangeText={setPartialPaidInput}
+                    onFocus={() => {
+                      if (partialPaidInput.trim() === '0') {
+                        setPartialPaidInput('');
+                      }
+                    }}
+                    selectTextOnFocus
+                    placeholder="Ej: 5 o 2.50"
+                    placeholderTextColor={Colors.textMuted}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              )}
+            </View>
+
+            {/* Total y ganancia neta congelada */}
+            <View style={styles.totalCard}>
+              <View style={styles.totalTopRow}>
+                <View>
+                  <Text style={styles.totalKicker}>
+                    {paymentType === 'CASH' ? 'TOTAL CONTADO' : 'PRECIO HISTÓRICO CONGELADO'}
+                  </Text>
+                  <Text style={styles.totalAmount}>{formatCentsToUSD(subtotalCents)}</Text>
+                </View>
+                <View style={styles.frozenTag}>
+                  <Ionicons name="snow-outline" size={14} color={Colors.primaryLight} />
+                  <Text style={styles.frozenTagText}>
+                    {parsedQty > 0 ? formatStockQty(parsedQty, product.unitType) : '0'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.profitStrip}>
+                <Text style={styles.profitStripText}>
+                  Costo: {formatCentsToUSD(costSubtotalCents)}
                 </Text>
-              </>
-            )}
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+                <Text
+                  style={[
+                    styles.profitStripHighlight,
+                    estimatedProfitCents < 0 && styles.profitStripLoss,
+                  ]}
+                >
+                  Ganancia neta: {formatCentsToUSD(estimatedProfitCents)}
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.confirmBtn,
+                (pressed || isSubmitting || isOutOfStock) && styles.confirmBtnDisabled,
+              ]}
+              onPress={() => void handleSubmitSale()}
+              disabled={isSubmitting || isOutOfStock}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle-outline" size={20} color={Colors.white} />
+                  <Text style={styles.confirmBtnText}>
+                    {paymentType === 'CASH'
+                      ? 'Confirmar venta'
+                      : paymentType === 'CREDIT'
+                        ? 'Anotar fiado'
+                        : 'Confirmar pago mixto'}
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </AgendaPaperBackground>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   flexOne: {
     flex: 1,
@@ -563,7 +687,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.xl,
-    backgroundColor: Colors.background,
+    backgroundColor: 'transparent',
   },
   scrollContent: {
     padding: Spacing.lg,
@@ -594,6 +718,9 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  thumbEmoji: {
+    fontSize: 38,
+  },
   productInfo: {
     flex: 1,
     gap: 3,
@@ -605,7 +732,7 @@ const styles = StyleSheet.create({
   },
   productPrice: {
     fontSize: Typography.body,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.primary,
   },
   stockLabel: {
@@ -631,14 +758,45 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     letterSpacing: 1,
   },
+  tierBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    gap: 2,
+  },
+  tierBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  tierTitle: {
+    fontSize: Typography.caption,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  tierTitleActive: {
+    color: Colors.white,
+  },
+  tierPrice: {
+    fontSize: Typography.micro,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  tierPriceActive: {
+    color: Colors.primarySoft,
+  },
   presetsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.sm,
   },
   presetChip: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 11,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
     borderRadius: Radius.full,
     backgroundColor: Colors.background,
     borderWidth: 1,
@@ -837,13 +995,18 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   totalCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: Colors.vaultBackground,
     borderRadius: Radius.xl,
     padding: Spacing.lg,
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.vaultBorderHighlight,
     ...Shadows.floating,
+  },
+  totalTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   totalKicker: {
     fontSize: 10,
@@ -854,7 +1017,7 @@ const styles = StyleSheet.create({
   totalAmount: {
     fontSize: Typography.hero,
     fontWeight: '800',
-    color: Colors.vaultTextPrimary,
+    color: Colors.gold,
     marginTop: 2,
   },
   frozenTag: {
@@ -872,6 +1035,27 @@ const styles = StyleSheet.create({
     color: Colors.vaultTextPrimary,
     fontSize: Typography.caption,
     fontWeight: '700',
+  },
+  profitStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.vaultBorder,
+  },
+  profitStripText: {
+    fontSize: Typography.caption,
+    color: Colors.vaultTextSecondary,
+    fontWeight: '600',
+  },
+  profitStripHighlight: {
+    fontSize: Typography.caption,
+    color: Colors.primaryLight,
+    fontWeight: '800',
+  },
+  profitStripLoss: {
+    color: '#FCA5A5',
   },
   confirmBtn: {
     flexDirection: 'row',
